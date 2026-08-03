@@ -17,8 +17,9 @@ local id1 = 6403373529
 local id2 = 9015014224
 local id3 = 11520107397
 
--- ==== Кэш серверов (живёт в _G пока не закрыт инжектор) ====
-_G.ServerCache = _G.ServerCache or {}
+local function cacheKey(placeId)
+    return "ServerCache_" .. tostring(placeId)
+end
 
 local function fetchServers(placeId)
     local servers = {}
@@ -33,20 +34,27 @@ local function fetchServers(placeId)
             end
         end
     end
+    print("[API ЗАПРОС] place:", placeId, "получено серверов:", #servers)
     return servers
 end
 
 local function getServerList(placeId)
-    if not _G.ServerCache[placeId] or #_G.ServerCache[placeId] == 0 then
-        _G.ServerCache[placeId] = fetchServers(placeId)
+    local key = cacheKey(placeId)
+    local cache = TeleportService:GetTeleportSetting(key)
+    if not cache or #cache == 0 then
+        print("[КЭША НЕТ] place:", placeId, "-> делаем запрос")
+        cache = fetchServers(placeId)
+    else
+        print("[КЭШ ЕСТЬ] place:", placeId, "осталось серверов:", #cache)
     end
-    return _G.ServerCache[placeId]
+    return cache
 end
 
 local function popServer(placeId)
     local list = getServerList(placeId)
-    if #list == 0 then return nil end
-    return table.remove(list, 1)
+    if #list == 0 then return nil, list end
+    local jobId = table.remove(list, 1)
+    return jobId, list
 end
 
 local function nextPlace(pid)
@@ -54,11 +62,14 @@ local function nextPlace(pid)
 end
 
 local function teleportToFreshServer(placeId)
-    local jobId = popServer(placeId)
+    local jobId, remaining = popServer(placeId)
     if jobId then
+        TeleportService:SetTeleportSetting(cacheKey(placeId), remaining)
+        print("[ТЕЛЕПОРТ] place:", placeId, "jobId:", jobId, "останется в кэше:", #remaining)
         TeleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
     else
-        TeleportService:Teleport(placeId) -- фоллбек, если кэш пуст
+        print("[ФОЛЛБЕК] place:", placeId, "кэш пуст, обычный Teleport")
+        TeleportService:Teleport(placeId)
     end
 end
 
