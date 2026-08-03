@@ -61,15 +61,48 @@ local function nextPlace(pid)
     return (pid == id1 and id2) or (pid == id2 and id3) or id1
 end
 
-local function teleportToFreshServer(placeId)
+local MAX_ATTEMPTS = 20
+
+local function teleportToFreshServer(placeId, attempt)
+    attempt = attempt or 1
+    if attempt > MAX_ATTEMPTS then
+        print("[КРИТИЧЕСКАЯ ОШИБКА] превышен лимит попыток, обычный Teleport")
+        pcall(function() TeleportService:Teleport(placeId) end)
+        return
+    end
+
     local jobId, remaining = popServer(placeId)
+
     if jobId then
         TeleportService:SetTeleportSetting(cacheKey(placeId), remaining)
-        print("[ТЕЛЕПОРТ] place:", placeId, "jobId:", jobId, "останется в кэше:", #remaining)
-        TeleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
+        print("[ТЕЛЕПОРТ] попытка:", attempt, "place:", placeId, "jobId:", jobId, "останется в кэше:", #remaining)
+
+        local failed = false
+        local conn
+        conn = TeleportService.TeleportInitFailed:Connect(function(_, errorReason, errorMessage)
+            failed = true
+            print("[ОШИБКА ТЕЛЕПОРТА]", errorReason, errorMessage)
+        end)
+
+        local ok = pcall(function()
+            TeleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
+        end)
+
+        task.wait(2)
+        conn:Disconnect()
+
+        if not ok or failed then
+            print("[FALLBACK] пробуем следующий jobId из кэша, попытка:", attempt + 1)
+            teleportToFreshServer(placeId, attempt + 1)
+        end
     else
         print("[ФОЛЛБЕК] place:", placeId, "кэш пуст, обычный Teleport")
-        TeleportService:Teleport(placeId)
+        local ok = pcall(function()
+            TeleportService:Teleport(placeId)
+        end)
+        if not ok then
+            print("[КРИТИЧЕСКАЯ ОШИБКА] даже обычный Teleport не сработал")
+        end
     end
 end
 
