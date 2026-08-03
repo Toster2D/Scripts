@@ -1,0 +1,89 @@
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local LocalPlayer = Players.LocalPlayer
+
+local supportedPlaceIds = {
+    [6403373529] = true,
+    [9015014224] = true,
+    [11520107397] = true
+}
+
+local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart", 15)
+if not hrp then return end
+
+task.wait(1)
+
+if supportedPlaceIds[game.PlaceId] then
+    local safeportCFrame = CFrame.new(2457.6001, 229.365677, -4558.22363, -0.999834299, 0.000101457415, 0.0182033889, 3.8126462e-08, 0.999984503, -0.00557136489, -0.018203672, -0.00557044102, -0.999818802)
+
+    local safeport = Instance.new("Part", workspace)
+    safeport.Name = "SafePort15"
+    safeport.Size = Vector3.new(200, 10, 200)
+    safeport.Transparency = 0.5
+    safeport.CanCollide = true
+    safeport.Anchored = true
+    safeport.CFrame = safeportCFrame
+end
+
+if character:FindFirstChild("entered") == nil then
+    local lobby = workspace:WaitForChild("Lobby", 10)
+    if lobby then
+        local teleport1 = lobby:WaitForChild("Teleport1", 10)
+        if teleport1 then
+            local timeout = 0
+            repeat task.wait(0.1)
+                timeout = timeout + 0.1
+                if character:FindFirstChild("HumanoidRootPart") then
+                    firetouchinterest(character.HumanoidRootPart, teleport1, 0)
+                    firetouchinterest(character.HumanoidRootPart, teleport1, 1)
+                end
+            until character:FindFirstChild("entered") or timeout > 15
+        end
+    end
+end
+
+if supportedPlaceIds[game.PlaceId] then
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        local teleportCFrame = CFrame.new(2461.50464, 243.291565, -4546.78467, 0.966821849, -0.00649187574, 0.255369186, -1.00234743e-09, 0.999677002, 0.0254133251, -0.255451679, -0.0245701578, 0.966509581)
+        character.HumanoidRootPart.CFrame = teleportCFrame
+    end
+end
+
+task.wait(0.5)
+
+local arena = workspace:WaitForChild("Arena", 10)
+if arena then
+    local island5 = arena:WaitForChild("island5", 10)
+    if island5 then
+        local slapples = island5:FindFirstChild("Slapples")
+        if slapples then
+            for _, v in ipairs(slapples:GetDescendants()) do
+                if v.Name == "Glove" and v:FindFirstChildWhichIsA("TouchTransmitter") then
+                    if character and character:FindFirstChild("HumanoidRootPart") then
+                        firetouchinterest(character.HumanoidRootPart, v, 0)
+                        firetouchinterest(character.HumanoidRootPart, v, 1)
+                    end
+                end
+            end
+        end
+    end
+end
+
+local id1 = 6403373529
+local id2 = 9015014224
+local id3 = 11520107397
+
+task.wait(2)
+
+if game.PlaceId == id1 then
+    TeleportService:Teleport(id2)
+elseif game.PlaceId == id2 then
+    TeleportService:Teleport(id3)
+elseif game.PlaceId == id3 then
+    TeleportService:Teleport(id1)
+end
