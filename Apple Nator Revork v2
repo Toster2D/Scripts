@@ -75,76 +75,87 @@ if arena then
     end
 end
 
-local id1 = 6403373529
-local id2 = 9015014224
-local id3 = 11520107397
-
-task.wait(2)
-
--- Функция сервер-хопа (как в Infinite Yield)
-local function serverHop(placeId)
-    placeId = placeId or game.PlaceId
-
-    -- Поддержка разных эксплойтов
-    local req = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or request
+-- Функция Server Hop по принципу Infinite Yield
+local function serverHop()
+    local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
     if not req then
-        -- Если эксплойт не поддерживает HTTP-запросы, делаем обычный телепорт
-        warn("HTTP request not supported. Using basic teleport.")
-        TeleportService:Teleport(placeId)
+        warn("Ваш эксплойт не поддерживает HTTP запросы для Server Hop!")
         return
     end
 
-    local servers = {}
-    local cursor = ""
+    local placeId = game.PlaceId
+    local currentJobId = game.JobId
 
     while true do
-        local url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Desc&limit=100%s", placeId, cursor ~= "" and "&cursor="..cursor or "")
-        local success, response = pcall(function()
-            return req({
-                Url = url,
-                Method = "GET"
-            })
-        end)
+        local cursor = ""
+        local hopped = false
 
-        if not success or not response or not response.Body then break end
+        while not hopped do
+            local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+            if cursor ~= "" then
+                url = url .. "&cursor=" .. cursor
+            end
 
-        local body = HttpService:JSONDecode(response.Body)
-        if not body or not body.data then break end
+            local success, response = pcall(function()
+                return req({
+                    Url = url,
+                    Method = "GET"
+                })
+            end)
 
-        for _, server in ipairs(body.data) do
-            if type(server) == "table" and server.id and server.playing < server.maxPlayers then
-                if server.id ~= game.JobId then
-                    table.insert(servers, server.id)
+            if success and response.StatusCode == 200 then
+                local body = HttpService:JSONDecode(response.Body)
+                if body.data and #body.data > 0 then
+                    local validServers = {}
+                    
+                    for _, server in ipairs(body.data) do
+                        if server.playing < server.maxPlayers and server.id ~= currentJobId then
+                            table.insert(validServers, server.id)
+                        end
+                    end
+
+                    if #validServers > 0 then
+                        local randomServer = validServers[math.random(1, #validServers)]
+                        
+                        -- Пытаемся телепортироваться
+                        local tpSuccess, tpErr = pcall(function()
+                            TeleportService:TeleportToPlaceInstance(placeId, randomServer, LocalPlayer)
+                        end)
+                        
+                        if not tpSuccess then
+                            warn("Ошибка телепорта: " .. tostring(tpErr) .. ". Ищем другой сервер...")
+                            task.wait(1)
+                        else
+                            -- Ждем 3 секунды. Если мы всё еще в этой же игре, значит сервер был полный или телепорт сорвался
+                            task.wait(3)
+                            if game.JobId == currentJobId then
+                                warn("Телепорт сорвался (возможно, сервер полный). Повторная попытка найти сервер...")
+                            else
+                                hopped = true
+                            end
+                        end
+                    else
+                        -- Если на этой странице нет подходящих серверов, переходим на следующую
+                        if body.nextPageCursor then
+                            cursor = body.nextPageCursor
+                        else
+                            -- Если страницы закончились, начинаем поиск заново
+                            cursor = ""
+                            task.wait(1)
+                        end
+                    end
+                else
+                    cursor = ""
+                    task.wait(2)
                 end
+            else
+                task.wait(2)
             end
         end
-
-        if #servers > 0 then
-            -- Выбираем случайный сервер из найденных
-            local randomServer = servers[math.random(1, #servers)]
-            pcall(function()
-                TeleportService:TeleportToPlaceInstance(placeId, randomServer, LocalPlayer)
-            end)
-            break
-        end
-
-        cursor = body.nextPageCursor
-        if not cursor then break end
-        task.wait(0.1) -- Небольшая задержка, чтобы не словить рейт-лимит
-    end
-
-    -- Если серверов не найдено или API недоступно, используем запасной телепорт
-    if #servers == 0 then
-        warn("No available servers found via API. Using basic teleport.")
-        TeleportService:Teleport(placeId)
+        
+        if hopped then break end
     end
 end
 
--- Запуск сервер-хопа в зависимости от текущего места
-if game.PlaceId == id1 then
-    serverHop(id2)
-elseif game.PlaceId == id2 then
-    serverHop(id3)
-elseif game.PlaceId == id3 then
-    serverHop(id1)
-end
+task.wait(2)
+serverHop()
