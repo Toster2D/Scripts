@@ -75,10 +75,9 @@ if arena then
     end
 end
 
--- Случайная задержка от 1 до 4 секунд, чтобы боты не телепортировались одновременно
+-- Случайная задержка от 1 до 4 секунд, чтобы боты не делали запросы в одну миллисекунду
 task.wait(math.random(1, 4))
 
--- Функция Server Hop
 local function serverHop()
     local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
     if not req then
@@ -89,83 +88,90 @@ local function serverHop()
     local placeId = game.PlaceId
     local currentJobId = game.JobId
 
-    while true do
+    -- Пул серверов (кешируем, чтобы не спамить API)
+    local serverPool = {}
+
+    local function fetchServers()
         local cursor = ""
-        local hopped = false
-
-        while not hopped do
-            local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
-            if cursor ~= "" then
-                url = url .. "&cursor=" .. cursor
-            end
-
-            local success, response = pcall(function()
-                return req({
-                    Url = url,
-                    Method = "GET"
-                })
-            end)
-
-            if success and response.StatusCode == 200 then
-                local body = HttpService:JSONDecode(response.Body)
-                if body.data and #body.data > 0 then
-                    local validServers = {}
-                    
-                    for _, server in ipairs(body.data) do
-                        if server.playing < server.maxPlayers and server.id ~= currentJobId then
-                            table.insert(validServers, server.id)
-                        end
-                    end
-
-                    if #validServers > 0 then
-                        local randomServer = validServers[math.random(1, #validServers)]
-                        
-                        local tpSuccess, tpErr = pcall(function()
-                            TeleportService:TeleportToPlaceInstance(placeId, randomServer, LocalPlayer)
-                        end)
-                        
-                        if not tpSuccess then
-                            warn("Ошибка телепорта: " .. tostring(tpErr) .. ". Ищем другой сервер...")
-                            task.wait(1)
-                        else
-                            -- Проверяем телепорт каждые 0.5 сек в течение 5 секунд
-                            local timeout = 0
-                            while timeout < 5 do
-                                task.wait(0.5)
-                                timeout = timeout + 0.5
-                                if game.JobId ~= currentJobId then
-                                    hopped = true
-                                    break
-                                end
-                            end
-                            
-                            if not hopped then
-                                warn("Телепорт сорвался (сервер полный). Повторная попытка найти сервер...")
-                                task.wait(0.5)
-                            end
-                        end
-                    else
-                        if body.nextPageCursor then
-                            cursor = body.nextPageCursor
-                        else
-                            cursor = ""
-                            task.wait(1)
-                        end
-                    end
-                else
-                    cursor = ""
-                    task.wait(1)
-                end
-            elseif success and response.StatusCode == 429 then
-                -- Роблокс заблокировал запрос из-за лимитов (2 бота с одного IP)
-                warn("Rate Limit (429): Слишком много запросов. Ждем 5 секунд перед повтором...")
-                task.wait(5)
-            else
-                task.wait(1)
-            end
-        end
+        local foundAny = false
         
-        if hopped then break end
+        -- Получаем только первую страницу (100 серверов), этого обычно хватит
+        local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+        
+        local success, response = pcall(function()
+            return req({
+                Url = url,
+                Method = "GET"
+            })
+        end)
+
+        if success and response.StatusCode == 200 then
+            local body = HttpService:JSONDecode(response.Body)
+            if body.data and #body.data > 0 then
+                for _, server in ipairs(body.data) do
+                    if server.playing < server.maxPlayers and server.id ~= currentJobId then
+                        table.insert(serverPool, server.id)
+                        foundAny = true
+                    end
+                end
+            end
+            return foundAny
+        elseif success and response.StatusCode == 429 then
+            warn("Rate Limit (429): Слишком много запросов. Ждем 5 сек...")
+            task.wait(5)
+            return false
+        else
+            task.wait(2)
+            return false
+        end
+    end
+
+    while true do
+        -- Если пул пуст, делаем ОДИН запрос к API
+        if #serverPool == 0 then
+            fetchServers()
+        end
+
+        -- Если после запроса сервера есть в пуле
+        if #serverPool > 0 then
+            -- Берем случайный сервер из пула
+            local randomIndex = math.random(1, #serverPool)
+            local targetServer = serverPool[randomIndex]
+            
+            -- Удаляем его из пула, чтобы не попробовать войти в него снова, если он полный
+            table.remove(serverPool, randomIndex)
+
+            local tpSuccess, tpErr = pcall(function()
+                TeleportService:TeleportToPlaceInstance(placeId, targetServer, LocalPlayer)
+            end)
+            
+            if not tpSuccess then
+                -- Просто идем на следующую итерацию цикла, возьмем другой сервер из пула (БЕЗ ЗАПРОСА К API)
+                task.wait(0.5)
+            else
+                -- Ждем до 5 секунд, проверяя каждые 0.5 сек ушли ли мы
+                local timeout = 0
+                local hopped = false
+                while timeout < 5 do
+                    task.wait(0.5)
+                    timeout = timeout + 0.5
+                    if game.JobId ~= currentJobId then
+                        hopped = true
+                        break
+                    end
+                end
+                
+                if hopped then
+                    break -- Успешно телепортировались, выходим из функции
+                else
+                    -- Телепорт сорвался. Идем на следующую итерацию, возьмем другой сервер из пула
+                    task.wait(0.2)
+                end
+            end
+        else
+            -- Если пул пуст и fetchServers ничего не нашел (или была 429 ошибка), ждем перед новой попыткой
+            task.wait(1)
+        end
     end
 end
 
