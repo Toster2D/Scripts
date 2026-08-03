@@ -4,6 +4,7 @@ end
 
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 local supportedPlaceIds = {
@@ -12,15 +13,63 @@ local supportedPlaceIds = {
     [11520107397] = true
 }
 
+local id1 = 6403373529
+local id2 = 9015014224
+local id3 = 11520107397
+
+-- ==== Кэш серверов (живёт в _G пока не закрыт инжектор) ====
+_G.ServerCache = _G.ServerCache or {}
+
+local function fetchServers(placeId)
+    local servers = {}
+    local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(placeId)
+    local ok, res = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(url))
+    end)
+    if ok and res and res.data then
+        for _, s in ipairs(res.data) do
+            if s.playing < s.maxPlayers then
+                table.insert(servers, s.id)
+            end
+        end
+    end
+    return servers
+end
+
+local function getServerList(placeId)
+    if not _G.ServerCache[placeId] or #_G.ServerCache[placeId] == 0 then
+        _G.ServerCache[placeId] = fetchServers(placeId)
+    end
+    return _G.ServerCache[placeId]
+end
+
+local function popServer(placeId)
+    local list = getServerList(placeId)
+    if #list == 0 then return nil end
+    return table.remove(list, 1)
+end
+
+local function nextPlace(pid)
+    return (pid == id1 and id2) or (pid == id2 and id3) or id1
+end
+
+local function teleportToFreshServer(placeId)
+    local jobId = popServer(placeId)
+    if jobId then
+        TeleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
+    else
+        TeleportService:Teleport(placeId) -- фоллбек, если кэш пуст
+    end
+end
+
+-- ==== Основная логика скрипта ====
 local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local hrp = character:WaitForChild("HumanoidRootPart", 15)
 if not hrp then return end
-
 task.wait(1)
 
 if supportedPlaceIds[game.PlaceId] then
     local safeportCFrame = CFrame.new(2457.6001, 229.365677, -4558.22363, -0.999834299, 0.000101457415, 0.0182033889, 3.8126462e-08, 0.999984503, -0.00557136489, -0.018203672, -0.00557044102, -0.999818802)
-
     local safeport = Instance.new("Part", workspace)
     safeport.Name = "SafePort15"
     safeport.Size = Vector3.new(200, 10, 200)
@@ -55,7 +104,6 @@ if supportedPlaceIds[game.PlaceId] then
 end
 
 task.wait(0.5)
-
 local arena = workspace:WaitForChild("Arena", 10)
 if arena then
     local island5 = arena:WaitForChild("island5", 10)
@@ -74,16 +122,5 @@ if arena then
     end
 end
 
-local id1 = 6403373529
-local id2 = 9015014224
-local id3 = 11520107397
-
 task.wait(2)
-
-if game.PlaceId == id1 then
-    TeleportService:Teleport(id2)
-elseif game.PlaceId == id2 then
-    TeleportService:Teleport(id3)
-elseif game.PlaceId == id3 then
-    TeleportService:Teleport(id1)
-end
+teleportToFreshServer(nextPlace(game.PlaceId))
