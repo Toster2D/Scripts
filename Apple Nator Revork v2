@@ -4,7 +4,6 @@ end
 
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 local supportedPlaceIds = {
@@ -14,10 +13,10 @@ local supportedPlaceIds = {
 }
 
 local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local hrp = character:WaitForChild("HumanoidRootPart", 10)
+local hrp = character:WaitForChild("HumanoidRootPart", 15)
 if not hrp then return end
 
-task.wait(0.5)
+task.wait(1)
 
 if supportedPlaceIds[game.PlaceId] then
     local safeportCFrame = CFrame.new(2457.6001, 229.365677, -4558.22363, -0.999834299, 0.000101457415, 0.0182033889, 3.8126462e-08, 0.999984503, -0.00557136489, -0.018203672, -0.00557044102, -0.999818802)
@@ -32,9 +31,9 @@ if supportedPlaceIds[game.PlaceId] then
 end
 
 if character:FindFirstChild("entered") == nil then
-    local lobby = workspace:WaitForChild("Lobby", 5)
+    local lobby = workspace:WaitForChild("Lobby", 10)
     if lobby then
-        local teleport1 = lobby:WaitForChild("Teleport1", 5)
+        local teleport1 = lobby:WaitForChild("Teleport1", 10)
         if teleport1 then
             local timeout = 0
             repeat task.wait(0.1)
@@ -43,7 +42,7 @@ if character:FindFirstChild("entered") == nil then
                     firetouchinterest(character.HumanoidRootPart, teleport1, 0)
                     firetouchinterest(character.HumanoidRootPart, teleport1, 1)
                 end
-            until character:FindFirstChild("entered") or timeout > 5
+            until character:FindFirstChild("entered") or timeout > 15
         end
     end
 end
@@ -57,9 +56,9 @@ end
 
 task.wait(0.5)
 
-local arena = workspace:WaitForChild("Arena", 5)
+local arena = workspace:WaitForChild("Arena", 10)
 if arena then
-    local island5 = arena:WaitForChild("island5", 5)
+    local island5 = arena:WaitForChild("island5", 10)
     if island5 then
         local slapples = island5:FindFirstChild("Slapples")
         if slapples then
@@ -75,107 +74,16 @@ if arena then
     end
 end
 
-task.wait(math.random(1, 4))
+local id1 = 6403373529
+local id2 = 9015014224
+local id3 = 11520107397
 
-local function serverHop()
-    local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
-    if not req then
-        warn("Ваш эксплойт не поддерживает HTTP запросы!")
-        return
-    end
+task.wait(2)
 
-    local placeId = game.PlaceId
-    local currentJobId = game.JobId
-
-    -- Функция получения серверов через API
-    local function fetchServers()
-        local cursor = ""
-        local fetchedList = {}
-        
-        while true do
-            local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
-            if cursor ~= "" then
-                url = url .. "&cursor=" .. cursor
-            end
-
-            local success, response = pcall(function()
-                return req({ Url = url, Method = "GET" })
-            end)
-
-            if success and response.StatusCode == 200 then
-                local body = HttpService:JSONDecode(response.Body)
-                if body.data and #body.data > 0 then
-                    for _, server in ipairs(body.data) do
-                        if server.playing < server.maxPlayers and server.id ~= currentJobId then
-                            table.insert(fetchedList, server.id)
-                        end
-                    end
-                end
-                
-                if body.nextPageCursor then
-                    cursor = body.nextPageCursor
-                else
-                    break
-                end
-            elseif success and response.StatusCode == 429 then
-                -- Случайная задержка, чтобы изолированные боты не стукались в API одновременно
-                local waitTime = math.random(2, 6)
-                warn("Rate limit (429). Ждем " .. waitTime .. " сек...")
-                task.wait(waitTime)
-            else
-                task.wait(1)
-                break
-            end
-        end
-
-        -- Перемешиваем сервера (алгоритм Фишера-Йетса), чтобы боты уходили в разные сервера
-        for i = #fetchedList, 2, -1 do
-            local j = math.random(i)
-            fetchedList[i], fetchedList[j] = fetchedList[j], fetchedList[i]
-        end
-
-        return fetchedList
-    end
-
-    -- 1. Получаем список серверов один раз
-    local cachedServers = fetchServers()
-
-    -- 2. Быстрый перебор серверов из кэша в памяти (Без HTTP запросов!)
-    local hopped = false
-    local attempts = 0
-
-    while not hopped and attempts < #cachedServers do
-        attempts = attempts + 1
-        local targetServer = cachedServers[attempts]
-
-        if targetServer ~= currentJobId then
-            local tpSuccess = pcall(function()
-                TeleportService:TeleportToPlaceInstance(placeId, targetServer, LocalPlayer)
-            end)
-            
-            if tpSuccess then
-                -- Быстрая проверка телепорта (макс 3 секунды)
-                local timeout = 0
-                while timeout < 3 do
-                    task.wait(0.5)
-                    timeout = timeout + 0.5
-                    if game.JobId ~= currentJobId then
-                        hopped = true
-                        break
-                    end
-                end
-                
-                -- Если телепорт сорвался, цикл просто берет следующий сервер из списка!
-                -- Никаких ожиданий и ошибок 429.
-            end
-        end
-    end
-
-    -- 3. Если все сервера из кэша закончились, а мы всё еще тут - запускаем заново
-    if not hopped then
-        task.wait(1)
-        serverHop()
-    end
+if game.PlaceId == id1 then
+    TeleportService:Teleport(id2)
+elseif game.PlaceId == id2 then
+    TeleportService:Teleport(id3)
+elseif game.PlaceId == id3 then
+    TeleportService:Teleport(id1)
 end
-
-serverHop()
