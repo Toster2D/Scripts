@@ -14,10 +14,10 @@ local supportedPlaceIds = {
 }
 
 local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local hrp = character:WaitForChild("HumanoidRootPart", 15)
+local hrp = character:WaitForChild("HumanoidRootPart", 10)
 if not hrp then return end
 
-task.wait(1)
+task.wait(0.5)
 
 if supportedPlaceIds[game.PlaceId] then
     local safeportCFrame = CFrame.new(2457.6001, 229.365677, -4558.22363, -0.999834299, 0.000101457415, 0.0182033889, 3.8126462e-08, 0.999984503, -0.00557136489, -0.018203672, -0.00557044102, -0.999818802)
@@ -32,9 +32,9 @@ if supportedPlaceIds[game.PlaceId] then
 end
 
 if character:FindFirstChild("entered") == nil then
-    local lobby = workspace:WaitForChild("Lobby", 10)
+    local lobby = workspace:WaitForChild("Lobby", 5)
     if lobby then
-        local teleport1 = lobby:WaitForChild("Teleport1", 10)
+        local teleport1 = lobby:WaitForChild("Teleport1", 5)
         if teleport1 then
             local timeout = 0
             repeat task.wait(0.1)
@@ -43,7 +43,7 @@ if character:FindFirstChild("entered") == nil then
                     firetouchinterest(character.HumanoidRootPart, teleport1, 0)
                     firetouchinterest(character.HumanoidRootPart, teleport1, 1)
                 end
-            until character:FindFirstChild("entered") or timeout > 15
+            until character:FindFirstChild("entered") or timeout > 5
         end
     end
 end
@@ -57,9 +57,9 @@ end
 
 task.wait(0.5)
 
-local arena = workspace:WaitForChild("Arena", 10)
+local arena = workspace:WaitForChild("Arena", 5)
 if arena then
-    local island5 = arena:WaitForChild("island5", 10)
+    local island5 = arena:WaitForChild("island5", 5)
     if island5 then
         local slapples = island5:FindFirstChild("Slapples")
         if slapples then
@@ -75,7 +75,10 @@ if arena then
     end
 end
 
--- Функция Server Hop по принципу Infinite Yield
+-- Случайная задержка от 1 до 4 секунд, чтобы боты не телепортировались одновременно
+task.wait(math.random(1, 4))
+
+-- Функция Server Hop
 local function serverHop()
     local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
     if not req then
@@ -117,7 +120,6 @@ local function serverHop()
                     if #validServers > 0 then
                         local randomServer = validServers[math.random(1, #validServers)]
                         
-                        -- Пытаемся телепортироваться
                         local tpSuccess, tpErr = pcall(function()
                             TeleportService:TeleportToPlaceInstance(placeId, randomServer, LocalPlayer)
                         end)
@@ -126,30 +128,40 @@ local function serverHop()
                             warn("Ошибка телепорта: " .. tostring(tpErr) .. ". Ищем другой сервер...")
                             task.wait(1)
                         else
-                            -- Ждем 3 секунды. Если мы всё еще в этой же игре, значит сервер был полный или телепорт сорвался
-                            task.wait(3)
-                            if game.JobId == currentJobId then
-                                warn("Телепорт сорвался (возможно, сервер полный). Повторная попытка найти сервер...")
-                            else
-                                hopped = true
+                            -- Проверяем телепорт каждые 0.5 сек в течение 5 секунд
+                            local timeout = 0
+                            while timeout < 5 do
+                                task.wait(0.5)
+                                timeout = timeout + 0.5
+                                if game.JobId ~= currentJobId then
+                                    hopped = true
+                                    break
+                                end
+                            end
+                            
+                            if not hopped then
+                                warn("Телепорт сорвался (сервер полный). Повторная попытка найти сервер...")
+                                task.wait(0.5)
                             end
                         end
                     else
-                        -- Если на этой странице нет подходящих серверов, переходим на следующую
                         if body.nextPageCursor then
                             cursor = body.nextPageCursor
                         else
-                            -- Если страницы закончились, начинаем поиск заново
                             cursor = ""
                             task.wait(1)
                         end
                     end
                 else
                     cursor = ""
-                    task.wait(2)
+                    task.wait(1)
                 end
+            elseif success and response.StatusCode == 429 then
+                -- Роблокс заблокировал запрос из-за лимитов (2 бота с одного IP)
+                warn("Rate Limit (429): Слишком много запросов. Ждем 5 секунд перед повтором...")
+                task.wait(5)
             else
-                task.wait(2)
+                task.wait(1)
             end
         end
         
@@ -157,5 +169,4 @@ local function serverHop()
     end
 end
 
-task.wait(2)
 serverHop()
