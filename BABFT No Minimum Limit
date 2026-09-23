@@ -10,6 +10,7 @@
     If you re-edit the block with the original ScalingTool afterward,
     the server will re-apply its default constraints and the block
     will snap back to the minimum size. Edit once, then leave it alone.
+    Remember that the original hitbox will still be 0.05.
 
     Credits:
     Big thanks to SPR for the underlying scaling system this tool
@@ -29,6 +30,7 @@
     сервер снова применит стандартные ограничения, и размер блока
     "откатится" к минимально допустимому. Отредактировал — не трогай
     блок другими скейл-инструментами.
+    Помните что оригинальный хитбокс все ище будет состовлять 0.05
 
     Благодарности:
     Отдельное спасибо SPR за систему масштабирования блоков,
