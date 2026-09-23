@@ -1,0 +1,270 @@
+--[[
+    BABFT — No Minimum Limit
+    ------------------------
+    A custom ScalingTool that removes the hard minimum size limit.
+    Lets you shrink blocks smoothly and precisely, well below the
+    original tool's floor.
+
+    IMPORTANT:
+    The block's real minimum size is still 0.05 under the hood.
+    If you re-edit the block with the original ScalingTool afterward,
+    the server will re-apply its default constraints and the block
+    will snap back to the minimum size. Edit once, then leave it alone.
+
+    Credits:
+    Big thanks to SPR for the underlying scaling system this tool
+    builds on top of.
+
+    ------------------------------------------------------------
+
+    BABFT No Minimum Limit
+    ------------------------
+    Кастомный ScalingTool без нижнего лимита размера блока.
+    Позволяет уменьшать блок точечно и плавно, в обход
+    стандартного минимального порога оригинального инструмента.
+
+    ВАЖНО:
+    Реальный минимальный размер блока по-прежнему остаётся 0.05.
+    Если после этого редактировать блок оригинальным ScalingTool —
+    сервер снова применит стандартные ограничения, и размер блока
+    "откатится" к минимально допустимому. Отредактировал — не трогай
+    блок другими скейл-инструментами.
+
+    Благодарности:
+    Отдельное спасибо SPR за систему масштабирования блоков,
+    на основе которой построен этот инструмент.
+--]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+local ch = player.Character or player.CharacterAdded:Wait()
+
+local originalTool = player.Backpack:WaitForChild("ScalingTool")
+local blocksFolder = workspace.Blocks:WaitForChild(player.Name)
+
+local function createFakeTool()
+    local old = player.Backpack:FindFirstChild("ScaleTool NL")
+        or (player.Character and player.Character:FindFirstChild("ScaleTool NL"))
+    if old then old:Destroy() end
+
+    local fakeTool = Instance.new("Tool")
+    fakeTool.Name = "ScaleTool NL"
+    fakeTool.RequiresHandle = false
+    fakeTool.CanBeDropped = false
+    fakeTool.Parent = player.Backpack
+    return fakeTool
+end
+
+local fakeTool = createFakeTool()
+
+player.CharacterAdded:Connect(function(newChar)
+    ch = newChar
+    task.wait(1)
+    fakeTool = createFakeTool()
+    setupTool(fakeTool)
+end)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "ScaleToolNL_GUI"
+gui.ResetOnSpawn = false
+gui.Enabled = false
+gui.Parent = player.PlayerGui
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 220, 0, 60)
+frame.Position = UDim2.new(0.5, -110, 1, -160)
+frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+frame.BackgroundTransparency = 0.3
+frame.BorderSizePixel = 0
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+
+local sizeLabel = Instance.new("TextLabel")
+sizeLabel.Size = UDim2.new(1, 0, 0, 28)
+sizeLabel.Position = UDim2.new(0, 0, 0, 4)
+sizeLabel.BackgroundTransparency = 1
+sizeLabel.TextColor3 = Color3.new(1, 1, 1)
+sizeLabel.Font = Enum.Font.GothamBold
+sizeLabel.TextSize = 13
+sizeLabel.Text = ""
+sizeLabel.Parent = frame
+
+local posLabel = Instance.new("TextLabel")
+posLabel.Size = UDim2.new(1, 0, 0, 28)
+posLabel.Position = UDim2.new(0, 0, 0, 32)
+posLabel.BackgroundTransparency = 1
+posLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+posLabel.Font = Enum.Font.Gotham
+posLabel.TextSize = 11
+posLabel.Text = ""
+posLabel.Parent = frame
+
+local handles
+local selectedBlock = nil
+local selectedPPart = nil
+local startDistance = 0
+local startSize = Vector3.new()
+local startCFrame = CFrame.new()
+local dragging = false
+local updateConn
+local inputConn
+local hoverConn
+
+local hoverHighlight = Instance.new("Highlight")
+hoverHighlight.Name = "NLHoverHighlight"
+hoverHighlight.FillColor = Color3.fromRGB(255, 170, 0)
+hoverHighlight.FillTransparency = 0.5
+hoverHighlight.OutlineColor = Color3.fromRGB(255, 170, 0)
+hoverHighlight.OutlineTransparency = 0
+hoverHighlight.Enabled = false
+hoverHighlight.Parent = game:GetService("CoreGui")
+
+local hoveredBlock = nil
+
+local function clearHover()
+    hoverHighlight.Enabled = false
+    hoverHighlight.Adornee = nil
+    hoveredBlock = nil
+end
+
+local function updateHover()
+    if selectedBlock then
+        clearHover()
+        return
+    end
+
+    local target = mouse.Target
+    local block = target and target.Parent
+
+    if block and block.Parent == blocksFolder and target.Name == "PPart" then
+        if hoveredBlock ~= block then
+            hoveredBlock = block
+            hoverHighlight.Adornee = block
+            hoverHighlight.Enabled = true
+        end
+    else
+        clearHover()
+    end
+end
+
+local function startUpdate()
+    if updateConn then updateConn:Disconnect() end
+    updateConn = RunService.RenderStepped:Connect(function()
+        if selectedPPart then
+            local s = selectedPPart.Size
+            local p = selectedPPart.Position
+            sizeLabel.Text = string.format("%.3f, %.3f, %.3f", s.X, s.Y, s.Z)
+            posLabel.Text = string.format("%.3f, %.3f, %.3f", p.X, p.Y, p.Z)
+        end
+    end)
+end
+
+local function createHandles(ppart)
+    if handles then handles:Destroy() end
+    handles = Instance.new("Handles")
+    handles.Name = "NLHandles"
+    handles.Adornee = ppart
+    handles.Color = BrickColor.new("CGA brown")
+    handles.Style = Enum.HandlesStyle.Resize
+    handles.Faces = Faces.new(
+        Enum.NormalId.Front, Enum.NormalId.Back,
+        Enum.NormalId.Left, Enum.NormalId.Right,
+        Enum.NormalId.Top, Enum.NormalId.Bottom
+    )
+    handles.Parent = game:GetService("CoreGui")
+
+    handles.MouseButton1Down:Connect(function()
+        dragging = true
+        startDistance = 0
+        startSize = selectedPPart.Size
+        startCFrame = selectedPPart.CFrame
+    end)
+
+    handles.MouseButton1Up:Connect(function()
+        dragging = false
+        startDistance = 0
+    end)
+
+    handles.MouseDrag:Connect(function(face, distance)
+        if not dragging or not selectedPPart then return end
+        pcall(function()
+            local totalDelta = (distance - startDistance) * 0.1
+
+            local faceNormals = {
+                [Enum.NormalId.Right]  = startCFrame.RightVector,
+                [Enum.NormalId.Left]   = -startCFrame.RightVector,
+                [Enum.NormalId.Top]    = startCFrame.UpVector,
+                [Enum.NormalId.Bottom] = -startCFrame.UpVector,
+                [Enum.NormalId.Front]  = startCFrame.LookVector,
+                [Enum.NormalId.Back]   = -startCFrame.LookVector,
+            }
+
+            local normal = faceNormals[face]
+            if not normal then return end
+
+            local sizeAxis = Vector3.new(
+                (face == Enum.NormalId.Right or face == Enum.NormalId.Left) and totalDelta or 0,
+                (face == Enum.NormalId.Top or face == Enum.NormalId.Bottom) and totalDelta or 0,
+                (face == Enum.NormalId.Front or face == Enum.NormalId.Back) and totalDelta or 0
+            )
+
+            local newSize = Vector3.new(
+                math.max(0.001, startSize.X + sizeAxis.X),
+                math.max(0.001, startSize.Y + sizeAxis.Y),
+                math.max(0.001, startSize.Z + sizeAxis.Z)
+            )
+
+            local deltaSize = newSize - startSize
+            local offset = normal * (deltaSize.X + deltaSize.Y + deltaSize.Z) / 2
+            local newCFrame = startCFrame + offset
+
+            originalTool.RF:InvokeServer(selectedBlock, newSize, newCFrame)
+        end)
+    end)
+end
+
+function setupTool(tool)
+    tool.Equipped:Connect(function()
+        gui.Enabled = false
+
+        inputConn = UserInputService.InputBegan:Connect(function(input, gpe)
+            if gpe then return end
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            if dragging then return end
+
+            local target = mouse.Target
+            if not target then return end
+
+            local block = target.Parent
+            if block and block.Parent == blocksFolder and target.Name == "PPart" then
+                selectedBlock = block
+                selectedPPart = target
+                sizeLabel.Text = "Selected: " .. block.Name
+                gui.Enabled = true
+                clearHover()
+                createHandles(selectedPPart)
+            end
+        end)
+
+        hoverConn = RunService.RenderStepped:Connect(updateHover)
+
+        startUpdate()
+    end)
+
+    tool.Unequipped:Connect(function()
+        gui.Enabled = false
+        dragging = false
+        if handles then handles:Destroy() handles = nil end
+        if updateConn then updateConn:Disconnect() updateConn = nil end
+        if inputConn then inputConn:Disconnect() inputConn = nil end
+        if hoverConn then hoverConn:Disconnect() hoverConn = nil end
+        clearHover()
+        selectedBlock = nil
+        selectedPPart = nil
+    end)
+end
+
+setupTool(fakeTool)
