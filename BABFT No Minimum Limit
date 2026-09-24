@@ -35,6 +35,15 @@
     Благодарности:
     Отдельное спасибо SPR за систему масштабирования блоков,
     на основе которой построен этот инструмент.
+
+    ------------------------------------------------------------
+    v2: собственные орбы вместо стандартных Handles.
+    Стандартный Handles не даёт управлять расстоянием ручек от блока —
+    оно фиксировано движком. Здесь орбы — свои SphereHandleAdornment,
+    позиция которых считается вручную как face_center + normal * gap,
+    где gap — константа в стадах, не зависящая от размера блока.
+    Чекбокс "Compact handles" переключает gap на меньшее значение,
+    буквально прижимая орбы к самому блоку.
 --]]
 
 local Players = game:GetService("Players")
@@ -69,6 +78,7 @@ player.CharacterAdded:Connect(function(newChar)
     setupTool(fakeTool)
 end)
 
+-- GUI
 local gui = Instance.new("ScreenGui")
 gui.Name = "ScaleToolNL_GUI"
 gui.ResetOnSpawn = false
@@ -76,8 +86,8 @@ gui.Enabled = false
 gui.Parent = player.PlayerGui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 220, 0, 60)
-frame.Position = UDim2.new(0.5, -110, 1, -160)
+frame.Size = UDim2.new(0, 220, 0, 100)
+frame.Position = UDim2.new(0.5, -110, 1, -200)
 frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 frame.BackgroundTransparency = 0.3
 frame.BorderSizePixel = 0
@@ -85,7 +95,7 @@ frame.Parent = gui
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
 
 local sizeLabel = Instance.new("TextLabel")
-sizeLabel.Size = UDim2.new(1, 0, 0, 28)
+sizeLabel.Size = UDim2.new(1, 0, 0, 24)
 sizeLabel.Position = UDim2.new(0, 0, 0, 4)
 sizeLabel.BackgroundTransparency = 1
 sizeLabel.TextColor3 = Color3.new(1, 1, 1)
@@ -95,8 +105,8 @@ sizeLabel.Text = ""
 sizeLabel.Parent = frame
 
 local posLabel = Instance.new("TextLabel")
-posLabel.Size = UDim2.new(1, 0, 0, 28)
-posLabel.Position = UDim2.new(0, 0, 0, 32)
+posLabel.Size = UDim2.new(1, 0, 0, 20)
+posLabel.Position = UDim2.new(0, 0, 0, 28)
 posLabel.BackgroundTransparency = 1
 posLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 posLabel.Font = Enum.Font.Gotham
@@ -104,6 +114,66 @@ posLabel.TextSize = 11
 posLabel.Text = ""
 posLabel.Parent = frame
 
+-- Поле ввода шага
+local stepRow = Instance.new("Frame")
+stepRow.Size = UDim2.new(1, -12, 0, 26)
+stepRow.Position = UDim2.new(0, 6, 0, 54)
+stepRow.BackgroundTransparency = 1
+stepRow.Parent = frame
+
+local stepLabel = Instance.new("TextLabel")
+stepLabel.Size = UDim2.new(0, 70, 1, 0)
+stepLabel.Position = UDim2.new(0, 0, 0, 0)
+stepLabel.BackgroundTransparency = 1
+stepLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+stepLabel.Font = Enum.Font.Gotham
+stepLabel.TextSize = 11
+stepLabel.Text = "Step (studs):"
+stepLabel.TextXAlignment = Enum.TextXAlignment.Left
+stepLabel.Parent = stepRow
+
+local stepBox = Instance.new("TextBox")
+stepBox.Size = UDim2.new(0, 80, 1, 0)
+stepBox.Position = UDim2.new(0, 74, 0, 0)
+stepBox.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+stepBox.BorderSizePixel = 0
+stepBox.TextColor3 = Color3.new(1, 1, 1)
+stepBox.Font = Enum.Font.GothamBold
+stepBox.TextSize = 12
+stepBox.Text = "0"
+stepBox.PlaceholderText = "0"
+stepBox.ClearTextOnFocus = false
+stepBox.Parent = stepRow
+Instance.new("UICorner", stepBox).CornerRadius = UDim.new(0, 4)
+
+-- Разрешаем только цифры и "."
+stepBox:GetPropertyChangedSignal("Text"):Connect(function()
+    local filtered = stepBox.Text:gsub("[^%d%.]", "")
+    -- Только одна точка
+    local dotCount = 0
+    filtered = filtered:gsub("%.", function()
+        dotCount = dotCount + 1
+        return dotCount == 1 and "." or ""
+    end)
+    if stepBox.Text ~= filtered then
+        stepBox.Text = filtered
+    end
+end)
+
+local function getStep()
+    local val = tonumber(stepBox.Text)
+    if val and val > 0 then
+        return val
+    end
+    return 0
+end
+
+local function snapToStep(value, step)
+    if step <= 0 then return value end
+    return math.round(value / step) * step
+end
+
+-- Handles и логика
 local handles
 local selectedBlock = nil
 local selectedPPart = nil
@@ -133,14 +203,9 @@ local function clearHover()
 end
 
 local function updateHover()
-    if selectedBlock then
-        clearHover()
-        return
-    end
-
+    if selectedBlock then clearHover() return end
     local target = mouse.Target
     local block = target and target.Parent
-
     if block and block.Parent == blocksFolder and target.Name == "PPart" then
         if hoveredBlock ~= block then
             hoveredBlock = block
@@ -193,7 +258,9 @@ local function createHandles(ppart)
     handles.MouseDrag:Connect(function(face, distance)
         if not dragging or not selectedPPart then return end
         pcall(function()
-            local totalDelta = (distance - startDistance) * 0.1
+            local step = getStep()
+            local rawDelta = (distance - startDistance) * 0.1
+            local totalDelta = step > 0 and snapToStep(rawDelta, step) or rawDelta
 
             local faceNormals = {
                 [Enum.NormalId.Right]  = startCFrame.RightVector,
@@ -252,7 +319,6 @@ function setupTool(tool)
         end)
 
         hoverConn = RunService.RenderStepped:Connect(updateHover)
-
         startUpdate()
     end)
 
