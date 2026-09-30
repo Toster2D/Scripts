@@ -47,6 +47,8 @@ local ch = player.Character or player.CharacterAdded:Wait()
 local originalTool = player.Backpack:WaitForChild("ScalingTool")
 local blocksFolder = workspace.Blocks:WaitForChild(player.Name)
 
+local setupTool
+
 local function createFakeTool()
     local old = player.Backpack:FindFirstChild("ScaleTool NL")
         or (player.Character and player.Character:FindFirstChild("ScaleTool NL"))
@@ -74,41 +76,42 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "ScaleToolNL_GUI"
 gui.ResetOnSpawn = false
 gui.Enabled = false
+gui.DisplayOrder = 999
 gui.Parent = player.PlayerGui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 220, 0, 100)
-frame.Position = UDim2.new(0.5, -110, 1, -200)
+frame.Size = UDim2.new(0, 260, 0, 110)
+frame.Position = UDim2.new(0.5, -130, 1, -220)
 frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-frame.BackgroundTransparency = 0.3
+frame.BackgroundTransparency = 0.2
 frame.BorderSizePixel = 0
 frame.Parent = gui
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
 
 local sizeLabel = Instance.new("TextLabel")
-sizeLabel.Size = UDim2.new(1, 0, 0, 24)
+sizeLabel.Size = UDim2.new(1, 0, 0, 28)
 sizeLabel.Position = UDim2.new(0, 0, 0, 4)
 sizeLabel.BackgroundTransparency = 1
-sizeLabel.TextColor3 = Color3.new(1, 1, 1)
+sizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 sizeLabel.Font = Enum.Font.GothamBold
-sizeLabel.TextSize = 13
-sizeLabel.Text = ""
+sizeLabel.TextSize = 16
+sizeLabel.Text = "Size: -"
 sizeLabel.Parent = frame
 
 local posLabel = Instance.new("TextLabel")
 posLabel.Size = UDim2.new(1, 0, 0, 20)
-posLabel.Position = UDim2.new(0, 0, 0, 28)
+posLabel.Position = UDim2.new(0, 0, 0, 32)
 posLabel.BackgroundTransparency = 1
 posLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 posLabel.Font = Enum.Font.Gotham
-posLabel.TextSize = 11
-posLabel.Text = ""
+posLabel.TextSize = 12
+posLabel.Text = "Pos: -"
 posLabel.Parent = frame
 
 -- Поле ввода шага
 local stepRow = Instance.new("Frame")
 stepRow.Size = UDim2.new(1, -12, 0, 26)
-stepRow.Position = UDim2.new(0, 6, 0, 54)
+stepRow.Position = UDim2.new(0, 6, 0, 68)
 stepRow.BackgroundTransparency = 1
 stepRow.Parent = frame
 
@@ -211,11 +214,11 @@ end
 local function startUpdate()
     if updateConn then updateConn:Disconnect() end
     updateConn = RunService.RenderStepped:Connect(function()
-        if selectedPPart then
+        if selectedPPart and selectedPPart.Parent then
             local s = selectedPPart.Size
             local p = selectedPPart.Position
-            sizeLabel.Text = string.format("%.3f, %.3f, %.3f", s.X, s.Y, s.Z)
-            posLabel.Text = string.format("%.3f, %.3f, %.3f", p.X, p.Y, p.Z)
+            sizeLabel.Text = string.format("Size: %.3f, %.3f, %.3f", s.X, s.Y, s.Z)
+            posLabel.Text = string.format("Pos: %.2f, %.2f, %.2f", p.X, p.Y, p.Z)
         end
     end)
 end
@@ -302,7 +305,6 @@ function setupTool(tool)
             if block and block.Parent == blocksFolder and target.Name == "PPart" then
                 selectedBlock = block
                 selectedPPart = target
-                sizeLabel.Text = "Selected: " .. block.Name
                 gui.Enabled = true
                 clearHover()
                 createHandles(selectedPPart)
