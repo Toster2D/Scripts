@@ -1,0 +1,294 @@
+local STEPS, DT = 80, 1/20
+local SMOOTH = 0.8
+local BOUNCE = 1
+local COURT_IDS = {"4", "1"}
+local LOSE_COLOR = Color3.fromRGB(255, 0, 0)
+
+local RS = game:GetService("RunService")
+local cam = workspace.CurrentCamera
+local parent = (gethui and gethui()) or game:GetService("CoreGui")
+
+local getNil = function(name, class)
+    for _, v in next, getnilinstances() do
+        if v.ClassName == class and v.Name == name then return v end
+    end
+end
+
+local hitbox, lastScan = nil, 0
+local function getHitbox()
+    if tick() - lastScan >= 1 then
+        lastScan = tick()
+        hitbox = getNil("DebugHitbox", "Part") or hitbox
+    end
+    return hitbox
+end
+
+local targets, lines = {}, {}
+local rp = RaycastParams.new()
+rp.FilterType = Enum.RaycastFilterType.Exclude
+
+local function court()
+    local c = workspace:FindFirstChild("Courts")
+    if not c then return end
+    for _, id in ipairs(COURT_IDS) do
+        local m = c:FindFirstChild(id)
+        m = m and m:FindFirstChild("Map")
+        if m and (m:FindFirstChild("Colliders") or m:FindFirstChild("PlayerWall")) then
+            return m
+        end
+    end
+end
+
+local cache, lastRes = {}, 0
+local function resolve()
+    if tick() - lastRes < 1 and (cache.colliders or cache.wall) then return cache end
+    lastRes = tick()
+    local map = court()
+    local colliders = map and map:FindFirstChild("Colliders")
+    local wall = map and map:FindFirstChild("PlayerWall")
+
+    local c1 = workspace:FindFirstChild("Courts")
+    c1 = c1 and c1:FindFirstChild("1")
+    local m = c1 and c1:FindFirstChild("Map")
+    colliders = colliders or (m and m:FindFirstChild("Colliders"))
+    wall = wall or (m and m:FindFirstChild("PlayerWall"))
+
+    local sb = c1 and c1:FindFirstChild("ClientModel")
+    sb = sb and sb:FindFirstChild("Stadium")
+    sb = sb and sb:FindFirstChild("StadiumBuild")
+    local extra = sb and sb:GetChildren()[23]
+
+    local courts = workspace:FindFirstChild("Courts")
+    local function sub(inst, ...)
+        for _, n in ipairs({...}) do inst = inst and inst:FindFirstChild(n) end
+        return inst
+    end
+    local function nth(inst, i)
+        local ch = inst and inst:GetChildren()
+        return ch and ch[i]
+    end
+
+    local loseParts, loseSet = {}, {}
+    local function collect(inst)
+        if not inst then return end
+        if inst:IsA("BasePart") and not loseSet[inst] then
+            loseSet[inst] = true; loseParts[#loseParts + 1] = inst
+        end
+        for _, d in ipairs(inst:GetDescendants()) do
+            if d:IsA("BasePart") and not loseSet[d] then
+                loseSet[d] = true; loseParts[#loseParts + 1] = d
+            end
+        end
+    end
+
+    local lose = sub(courts, "4", "Map", "LoseKillParts")
+    local f4 = sub(courts, "4", "ClientModel", "Stadium", "Build", "Floor")
+    collect(lose)
+    collect(nth(f4, 7)); collect(sub(f4, "2", "Part"))
+    collect(nth(f4, 4)); collect(sub(f4, "1", "Part"))
+
+    if #loseParts == 0 then
+        lose = sub(courts, "1", "Map", "LoseKillParts")
+        local f1 = sub(courts, "1", "ClientModel", "Stadium", "Build", "Floor")
+        collect(lose)
+        collect(sub(f1, "1", "Part")); collect(nth(f1, 4))
+        collect(nth(f1, 6)); collect(sub(f1, "2", "Part"))
+    end
+
+    cache = {colliders = colliders, wall = wall, extra = extra, lose = lose, loseParts = loseParts, loseSet = loseSet}
+    return cache
+end
+
+local function isTarget(p)
+    return p:IsA("BasePart") and p.Name == "Part" and p.Parent == workspace
+end
+
+local function sphere(radius, color, z)
+    local s = Instance.new("SphereHandleAdornment")
+    s.Radius, s.AlwaysOnTop, s.ZIndex = radius, true, z
+    s.Color3, s.Transparency = color, 0.2
+    s.Adornee = workspace.Terrain
+    s.Parent = parent
+    return s
+end
+
+local function boxDist(cf, half, point)
+    local r = cf:PointToObjectSpace(point)
+    local o = Vector3.new(
+        math.max(math.abs(r.X) - half.X, 0),
+        math.max(math.abs(r.Y) - half.Y, 0),
+        math.max(math.abs(r.Z) - half.Z, 0)
+    )
+    return o.Magnitude + r.Magnitude * 0.001, o.Magnitude == 0
+end
+
+local AXES = {"X", "Y", "Z"}
+local function segBox(cf, half, a, b)
+    local la, lb = cf:PointToObjectSpace(a), cf:PointToObjectSpace(b)
+    local d = lb - la
+    local t0, t1 = 0, 1
+    for _, ax in ipairs(AXES) do
+        local da, pa, h = d[ax], la[ax], half[ax]
+        if math.abs(da) < 1e-6 then
+            if math.abs(pa) > h then return nil end
+        else
+            local ta, tb = (-h - pa) / da, (h - pa) / da
+            if ta > tb then ta, tb = tb, ta end
+            t0, t1 = math.max(t0, ta), math.min(t1, tb)
+            if t0 > t1 then return nil end
+        end
+    end
+    return a:Lerp(b, t0)
+end
+
+local function add(p)
+    if targets[p] or not isTarget(p) then return end
+    local box = Instance.new("BoxHandleAdornment")
+    box.Adornee, box.Size = p, p.Size
+    box.AlwaysOnTop, box.ZIndex, box.Transparency = true, 5, 0.6
+    box.Color3 = Color3.fromRGB(255, 50, 50)
+    box.Parent = parent
+    targets[p] = {
+        box = box,
+        sph = sphere(1.5, Color3.fromRGB(50, 255, 50), 5),
+        best = sphere(1.2, Color3.fromRGB(255, 0, 255), 6),
+        last = p.Position, vel = Vector3.zero,
+    }
+end
+
+local function remove(p)
+    local t = targets[p]
+    if not t then return end
+    t.box:Destroy(); t.sph:Destroy(); t.best:Destroy()
+    targets[p] = nil
+end
+
+for _, c in ipairs(workspace:GetChildren()) do add(c) end
+workspace.ChildAdded:Connect(add)
+workspace.ChildRemoved:Connect(remove)
+
+local function sync()
+    for p in pairs(targets) do
+        if p.Parent ~= workspace then remove(p) end
+    end
+    for _, c in ipairs(workspace:GetChildren()) do add(c) end
+end
+
+local function line(i)
+    if not lines[i] then
+        local l = Drawing.new("Line")
+        l.Thickness = 2
+        lines[i] = l
+    end
+    return lines[i]
+end
+
+RS.RenderStepped:Connect(function(dt)
+    sync()
+    local used = 0
+    local g = Vector3.new(0, -workspace.Gravity, 0)
+    local r = resolve()
+    local colliders, lose, loseParts, loseSet = r.colliders, r.lose, r.loseParts, r.loseSet
+    local hb = getHitbox()
+    local hbCF, hbHalf
+    if hb then hbCF, hbHalf = hb.CFrame, hb.Size / 2 end
+
+    for p, t in pairs(targets) do
+        t.box.Size = p.Size
+        local pos0 = p.Position
+        local measured = (pos0 - t.last) / math.max(dt, 1/240)
+        t.last = pos0
+        t.vel = t.vel:Lerp(measured, SMOOTH)
+
+        local vel = p.AssemblyLinearVelocity
+        if t.vel.Magnitude > vel.Magnitude then vel = t.vel end
+
+        local ign = {p}
+        if r.wall then ign[#ign + 1] = r.wall end
+        if r.extra then ign[#ign + 1] = r.extra end
+        rp.FilterDescendantsInstances = ign
+        local pos, landed = pos0, nil
+        local bestPos, bestScore, bestIn = nil, math.huge, false
+        local segs, isLose = {}, false
+
+        for s = 1, STEPS do
+            vel += g * DT
+            local nxt = pos + vel * DT
+            local hit = workspace:Raycast(pos, nxt - pos, rp)
+            local bounced = false
+
+            if hit then
+                if loseSet[hit.Instance] or (lose and hit.Instance:IsDescendantOf(lose)) then
+                    isLose = true
+                    nxt = hit.Position
+                    landed = hit.Position
+                elseif colliders and hit.Instance:IsDescendantOf(colliders) then
+                    local n = hit.Normal
+                    vel = (vel - 2 * vel:Dot(n) * n) * BOUNCE
+                    nxt = hit.Position + n * 0.05
+                    bounced = true
+                else
+                    nxt = hit.Position
+                    landed = hit.Position
+                end
+            end
+
+            if not isLose then
+                local bestT, bestPt = math.huge, nil
+                for _, lp in ipairs(loseParts) do
+                    local pt = segBox(lp.CFrame, lp.Size / 2, pos, nxt)
+                    if pt then
+                        local d = (pt - pos).Magnitude
+                        if d < bestT then bestT, bestPt = d, pt end
+                    end
+                end
+                if bestPt then
+                    isLose = true
+                    nxt = bestPt
+                    landed = bestPt
+                    bounced = false
+                end
+            end
+
+            if hbCF then
+                for k = 1, 4 do
+                    local pt = pos:Lerp(nxt, k / 4)
+                    local d, inside = boxDist(hbCF, hbHalf, pt)
+                    if d < bestScore then bestScore, bestPos, bestIn = d, pt, inside end
+                end
+            end
+
+            local a, ao = cam:WorldToViewportPoint(pos)
+            local b, bo = cam:WorldToViewportPoint(nxt)
+            segs[#segs + 1] = {a = a, b = b, vis = ao and bo, bounced = bounced}
+
+            pos = nxt
+            if landed then break end
+        end
+
+        for _, sg in ipairs(segs) do
+            used += 1
+            local l = line(used)
+            l.Visible = sg.vis
+            if isLose then
+                l.Color = LOSE_COLOR
+            else
+                l.Color = sg.bounced and Color3.fromRGB(0, 200, 255) or Color3.fromRGB(255, 255, 0)
+            end
+            l.From, l.To = Vector2.new(sg.a.X, sg.a.Y), Vector2.new(sg.b.X, sg.b.Y)
+        end
+
+        t.sph.CFrame = CFrame.new(landed or pos)
+        t.sph.Color3 = isLose and LOSE_COLOR or Color3.fromRGB(50, 255, 50)
+        t.sph.Visible = landed ~= nil
+
+        if bestPos then
+            t.best.CFrame = CFrame.new(bestPos)
+            t.best.Color3 = bestIn and Color3.fromRGB(255, 0, 255) or Color3.fromRGB(255, 150, 0)
+            t.best.Visible = true
+        else
+            t.best.Visible = false
+        end
+    end
+    for i = used + 1, #lines do lines[i].Visible = false end
+end)
