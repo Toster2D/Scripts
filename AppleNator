@@ -1,0 +1,70 @@
+local queue_on_teleport = queue_on_teleport or queueonteleport
+local my_script_url = ""
+if queue_on_teleport then
+    queue_on_teleport([[
+        if not game:IsLoaded() then game.Loaded:Wait() end
+        task.wait(2)
+        pcall(function()
+            loadstring(game:HttpGet("]] .. my_script_url .. [["))()
+        end)
+    ]])
+end
+
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+local LocalPlayer = game.Players.LocalPlayer
+-- Ждем персонажа с запасом времени (15 секунд), чтобы не зависнуть в пустоте
+local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart", 15)
+
+if not hrp then return end -- Если нет HRP, останавливаем скрипт, чтобы не крашнуло
+
+-- Функция для безопасной загрузки сторонних скриптов
+local function safeLoad(url)
+    pcall(function()
+        loadstring(game:HttpGet(url))()
+    end)
+end
+
+task.wait(1) -- Даем карте 1 секунду на прогрузку объектов
+
+safeLoad("https://pastebin.com/raw/CQbF5WmN")
+
+-- Безопасная телепортация с проверкой на существование Teleport1
+if character:FindFirstChild("entered") == nil then
+    local timeout = 0
+    repeat task.wait(0.1)
+        timeout = timeout + 0.1
+        if workspace:FindFirstChild("Lobby") and workspace.Lobby:FindFirstChild("Teleport1") and character:FindFirstChild("HumanoidRootPart") then
+            firetouchinterest(character.HumanoidRootPart, workspace.Lobby.Teleport1, 0)
+            firetouchinterest(character.HumanoidRootPart, workspace.Lobby.Teleport1, 1)
+        end
+    until character:FindFirstChild("entered") or not character.Parent or timeout > 15 -- Выходим из цикла через 15 секунд, чтобы не зависнуть
+    
+    safeLoad("https://pastebin.com/raw/AWYWR3Ri")
+end
+
+-- Безопасный сбор Slapples
+if workspace:FindFirstChild("Arena") and workspace.Arena:FindFirstChild("island5") and workspace.Arena.island5:FindFirstChild("Slapples") then
+    for i, v in ipairs(workspace.Arena.island5.Slapples:GetDescendants()) do
+        if v.Name == "Glove" and v:FindFirstChildWhichIsA("TouchTransmitter") and character:FindFirstChild("HumanoidRootPart") then
+            firetouchinterest(character.HumanoidRootPart, v, 0)
+            firetouchinterest(character.HumanoidRootPart, v, 1)
+        end
+    end
+else
+    -- Если арены нет, ждем пока она прогрузится
+    workspace:WaitForChild("Arena", 10)
+    if workspace:FindFirstChild("Arena") and workspace.Arena:FindFirstChild("island5") then
+        for i, v in ipairs(workspace.Arena.island5.Slapples:GetDescendants()) do
+            if v.Name == "Glove" and v:FindFirstChildWhichIsA("TouchTransmitter") and character:FindFirstChild("HumanoidRootPart") then
+                firetouchinterest(character.HumanoidRootPart, v, 0)
+                firetouchinterest(character.HumanoidRootPart, v, 1)
+            end
+        end
+    end
+end
+
+safeLoad("https://pastebin.com/raw/VB2Py5Y9")
