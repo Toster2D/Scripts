@@ -42,6 +42,42 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
+local RENDER_OFF = true   -- отключить 3D-рендер
+local LOW_GFX = true      -- убрать текстуры/эффекты
+
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+
+if LOW_GFX then
+    pcall(function() settings().Rendering.QualityLevel = 1 end)
+    Lighting.GlobalShadows = false
+    Lighting.FogEnd = 9e9
+    for _, v in ipairs(Lighting:GetChildren()) do
+        if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") then
+            v:Destroy()
+        end
+    end
+    local function strip(v)
+        if v:IsA("Decal") or v:IsA("Texture") or v:IsA("ParticleEmitter")
+            or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire")
+            or v:IsA("Smoke") or v:IsA("Sparkles") then
+            v:Destroy()
+        elseif v:IsA("MeshPart") then
+            v.TextureID = ""
+        elseif v:IsA("BasePart") then
+            v.Material = Enum.Material.SmoothPlastic
+            v.CastShadow = false
+        end
+    end
+    for _, v in ipairs(workspace:GetDescendants()) do pcall(strip, v) end
+    workspace.DescendantAdded:Connect(function(v) pcall(strip, v) end)
+end
+
+if RENDER_OFF then
+    RunService:Set3dRenderingEnabled(false)
+    if setfpscap then setfpscap(15) end
+end
+
 local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local hrp = character:WaitForChild("HumanoidRootPart", 15)
 if not hrp then
