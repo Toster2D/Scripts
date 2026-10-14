@@ -35,7 +35,8 @@ local isSupported = supportedPlaceIds[game.PlaceId]
 local PLATFORM_POS = Vector3.new(5000, 229, -9000)
 
 local function touch(part)
-    local root = character:FindFirstChild("HumanoidRootPart")
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
     if root and part then
         firetouchinterest(root, part, 0)
         firetouchinterest(root, part, 1)
@@ -57,21 +58,29 @@ if isSupported then
 end
 
 -- 2. Вход в арену + телепорт на точку
-if character:FindFirstChild("entered") == nil then
+local function hasEntered()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChild("entered")
+end
+
+if not hasEntered() then
     local timeout = 0
     repeat
         task.wait(0.1)
         timeout += 0.1
         local lobby = workspace:FindFirstChild("Lobby")
         local tp1 = lobby and lobby:FindFirstChild("Teleport1")
-        if tp1 then
+        if tp1 and timeout % 1 < 0.1 then -- касание раз в секунду, не спамим
             touch(tp1)
         end
-    until character:FindFirstChild("entered") or not character.Parent or timeout > 15
+    until hasEntered() or timeout > 15
 
-    if isSupported then
-        local root = character:FindFirstChild("HumanoidRootPart")
+    if hasEntered() and isSupported then
+        task.wait(0.5) -- даём серверу закончить телепорт игрока
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then
+            root.AssemblyLinearVelocity = Vector3.zero
             root.CFrame = CFrame.new(PLATFORM_POS + Vector3.new(0, 8, 0))
         end
     end
