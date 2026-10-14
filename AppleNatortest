@@ -13,7 +13,6 @@ local function log(...)
     end
 end
 
--- Автозапуск после телепорта
 local queue_on_teleport = queue_on_teleport or queueonteleport
 if queue_on_teleport then
     queue_on_teleport(([[
@@ -31,7 +30,6 @@ end
 
 log("запущен | PlaceId:", game.PlaceId, "| JobId:", game.JobId)
 
--- Если запустили не на нужном плейсе — телепортируемся на него, скрипт стартует там сам
 if game.PlaceId ~= PLACE_ID then
     log("неверный плейс, телепорт на", PLACE_ID)
     task.wait(2)
@@ -67,7 +65,6 @@ end
 
 task.wait(1)
 
--- 1. Платформа
 local platform = Instance.new("Part")
 platform.Name = "MyPlatform"
 platform.Size = Vector3.new(200, 10, 200)
@@ -77,7 +74,6 @@ platform.Anchored = true
 platform.Position = PLATFORM_POS
 platform.Parent = workspace
 
--- 2. Вход в арену + телепорт на платформу
 if not hasEntered() then
     log("вход в арену через Teleport1...")
     local timeout = 0
@@ -105,7 +101,6 @@ if not hasEntered() then
     end
 end
 
--- 3. Сбор Slapples
 local arena = workspace:FindFirstChild("Arena") or workspace:WaitForChild("Arena", 10)
 local island = arena and arena:FindFirstChild("island5")
 local slapples = island and island:FindFirstChild("Slapples")
@@ -120,8 +115,6 @@ if slapples then
 end
 log("Slapples: собрано объектов Glove:", gloves)
 
--- 4. Серверхоп со списком серверов
--- Список хранится в файле (переживает телепорт). Если файлов нет — в getgenv.
 local function countKeys(t)
     local n = 0
     for _ in pairs(t) do n += 1 end
@@ -204,7 +197,6 @@ local function fetchServers(visited)
     return list, stats
 end
 
--- Берёт следующий сервер из списка; если список закончился — запрашивает новый
 local function nextServer()
     local state = loadState()
     state.visited[game.JobId] = true -- текущий сервер уже посещён
@@ -215,8 +207,6 @@ local function nextServer()
         local list, stats = fetchServers(state.visited)
         state.servers = list
         state.batch += 1
-        -- память о посещённых сбрасывается на новую пачку
-        -- (если список пуст из-за того, что всё посещено, следующая попытка пойдёт уже без фильтра)
         state.visited = {[game.JobId] = true}
 
         if stats.err then
@@ -272,7 +262,5 @@ while true do
                 log("тайм-аут телепорта, беру следующий сервер")
             end
         end
-        -- если телепорт удался, скрипт перезапустится на новом сервере;
-        -- иначе (полный сервер, ошибка) цикл берёт следующий сервер
     end
 end
