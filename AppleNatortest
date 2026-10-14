@@ -1,0 +1,102 @@
+local SCRIPT_URL = "https://raw.githubusercontent.com/Toster2D/Scripts/refs/heads/main/AppleNator"
+
+-- Автозапуск после телепорта
+local queue_on_teleport = queue_on_teleport or queueonteleport
+if queue_on_teleport then
+    queue_on_teleport(([[
+        if not game:IsLoaded() then game.Loaded:Wait() end
+        task.wait(2)
+        pcall(function()
+            loadstring(game:HttpGet("%s"))()
+        end)
+    ]]):format(SCRIPT_URL))
+end
+
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local LocalPlayer = Players.LocalPlayer
+
+local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart", 15)
+if not hrp then return end
+
+-- Place IDs
+local ID1, ID2, ID3 = 6403373529, 9015014224, 11520107397
+local supportedPlaceIds = {
+    [ID1] = true,
+    [ID2] = true,
+    [ID3] = true,
+}
+local isSupported = supportedPlaceIds[game.PlaceId]
+local PLATFORM_POS = Vector3.new(5000, 229, -9000)
+
+local function touch(part)
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if root and part then
+        firetouchinterest(root, part, 0)
+        firetouchinterest(root, part, 1)
+    end
+end
+
+task.wait(1)
+
+-- 1. Платформа
+if isSupported then
+    local platform = Instance.new("Part")
+    platform.Name = "MyPlatform"
+    platform.Size = Vector3.new(200, 10, 200)
+    platform.Transparency = 0.5
+    platform.CanCollide = true
+    platform.Anchored = true
+    platform.Position = PLATFORM_POS
+    platform.Parent = workspace
+end
+
+-- 2. Вход в арену + телепорт на точку
+if character:FindFirstChild("entered") == nil then
+    local timeout = 0
+    repeat
+        task.wait(0.1)
+        timeout += 0.1
+        local lobby = workspace:FindFirstChild("Lobby")
+        local tp1 = lobby and lobby:FindFirstChild("Teleport1")
+        if tp1 then
+            touch(tp1)
+        end
+    until character:FindFirstChild("entered") or not character.Parent or timeout > 15
+
+    if isSupported then
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = CFrame.new(PLATFORM_POS + Vector3.new(0, 8, 0))
+        end
+    end
+end
+
+-- 3. Сбор Slapples
+local arena = workspace:FindFirstChild("Arena") or workspace:WaitForChild("Arena", 10)
+local island = arena and arena:FindFirstChild("island5")
+local slapples = island and island:FindFirstChild("Slapples")
+if slapples then
+    for _, v in ipairs(slapples:GetDescendants()) do
+        if v.Name == "Glove" and v:FindFirstChildWhichIsA("TouchTransmitter") then
+            touch(v)
+        end
+    end
+end
+
+-- 4. Цепочка телепортов: ID1 -> ID2 -> ID3 -> ID1
+local nextPlace = ({
+    [ID1] = ID2,
+    [ID2] = ID3,
+    [ID3] = ID1,
+})[game.PlaceId]
+
+if nextPlace then
+    task.wait(2)
+    TeleportService:Teleport(nextPlace)
+end
