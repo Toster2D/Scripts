@@ -5,6 +5,13 @@ local BATCH_SIZE = 40      -- сколько серверов в одном сп
 local RETRY_DELAY = 20     -- пауза, если серверов не нашлось
 local TP_TIMEOUT = 10      -- сколько ждём результата телепорта, потом берём следующий сервер
 local STATE_FILE = "AppleNator_servers.json"
+local LOGS = true          -- true = писать логи в консоль (F9), false = выключить
+
+local function log(...)
+    if LOGS then
+        print("[AppleNator]", ...)
+    end
+end
 
 -- Автозапуск после телепорта
 local queue_on_teleport = queue_on_teleport or queueonteleport
@@ -22,10 +29,11 @@ if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
-print("[AppleNator] запущен, PlaceId:", game.PlaceId)
+log("запущен | PlaceId:", game.PlaceId, "| JobId:", game.JobId)
 
 -- Если запустили не на нужном плейсе — телепортируемся на него, скрипт стартует там сам
 if game.PlaceId ~= PLACE_ID then
+    log("неверный плейс, телепорт на", PLACE_ID)
     task.wait(2)
     game:GetService("TeleportService"):Teleport(PLACE_ID)
     return
@@ -71,6 +79,7 @@ platform.Parent = workspace
 
 -- 2. Вход в арену + телепорт на платформу
 if not hasEntered() then
+    log("вход в арену через Teleport1...")
     local timeout = 0
     repeat
         task.wait(0.1)
@@ -83,6 +92,7 @@ if not hasEntered() then
     until hasEntered() or timeout > 15
 
     if hasEntered() then
+        log("вход выполнен, телепорт на платформу")
         task.wait(0.5)
         local char = LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -90,6 +100,8 @@ if not hasEntered() then
             root.AssemblyLinearVelocity = Vector3.zero
             root.CFrame = CFrame.new(PLATFORM_POS + Vector3.new(0, 8, 0))
         end
+    else
+        log("вход в арену не удался (таймаут)")
     end
 end
 
@@ -97,16 +109,25 @@ end
 local arena = workspace:FindFirstChild("Arena") or workspace:WaitForChild("Arena", 10)
 local island = arena and arena:FindFirstChild("island5")
 local slapples = island and island:FindFirstChild("Slapples")
+local gloves = 0
 if slapples then
     for _, v in ipairs(slapples:GetDescendants()) do
         if v.Name == "Glove" and v:FindFirstChildWhichIsA("TouchTransmitter") then
             touch(v)
+            gloves += 1
         end
     end
 end
+log("Slapples: собрано объектов Glove:", gloves)
 
 -- 4. Серверхоп со списком серверов
 -- Список хранится в файле (переживает телепорт). Если файлов нет — в getgenv.
+local function countKeys(t)
+    local n = 0
+    for _ in pairs(t) do n += 1 end
+    return n
+end
+
 local function loadState()
     local raw
     if readfile and isfile then
@@ -121,10 +142,12 @@ local function loadState()
         local ok, data = pcall(function() return HttpService:JSONDecode(raw) end)
         if ok and type(data) == "table" and type(data.servers) == "table" then
             data.visited = type(data.visited) == "table" and data.visited or {}
+            data.batch = tonumber(data.batch) or 0
+            data.hops = tonumber(data.hops) or 0
             return data
         end
     end
-    return {servers = {}, visited = {}}
+    return {servers = {}, visited = {}, batch = 0, hops = 0}
 end
 
 local function saveState(state)
@@ -138,14 +161,21 @@ local function saveState(state)
     end
 end
 
+-- Возвращает список id и статистику {total, skipped, err}
 local function fetchServers(visited)
+    local stats = {total = 0, skipped = 0}
     local ok, result = pcall(function()
         local url = "https://games.roblox.com/v1/games/" .. PLACE_ID
             .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true"
         return HttpService:JSONDecode(game:HttpGet(url))
     end)
-    if not ok or type(result) ~= "table" or type(result.data) ~= "table" then
-        return {}
+    if not ok then
+        stats.err = tostring(result)
+        return {}, stats
+    end
+    if type(result) ~= "table" or type(result.data) ~= "table" then
+        stats.err = "неожиданный ответ API"
+        return {}, stats
     end
 
     local list = {}
@@ -153,9 +183,13 @@ local function fetchServers(visited)
         if type(v) == "table"
             and tonumber(v.playing) and tonumber(v.maxPlayers)
             and v.playing < v.maxPlayers
-            and v.id ~= game.JobId
-            and not visited[v.id] then
-            list[#list + 1] = v.id
+            and v.id ~= game.JobId then
+            stats.total += 1
+            if visited[v.id] then
+                stats.skipped += 1
+            else
+                list[#list + 1] = v.id
+            end
         end
     end
 
@@ -167,7 +201,7 @@ local function fetchServers(visited)
     while #list > BATCH_SIZE do
         table.remove(list)
     end
-    return list
+    return list, stats
 end
 
 -- Берёт следующий сервер из списка; если список закончился — запрашивает новый
@@ -176,42 +210,66 @@ local function nextServer()
     state.visited[game.JobId] = true -- текущий сервер уже посещён
 
     if #state.servers == 0 then
-        -- новый список: исключаем серверы, где уже были в прошлой пачке
-        state.servers = fetchServers(state.visited)
+        local visitedCount = countKeys(state.visited)
+        log("список пуст, запрашиваю новую пачку (исключаю посещённых:", visitedCount, ")")
+        local list, stats = fetchServers(state.visited)
+        state.servers = list
+        state.batch += 1
         -- память о посещённых сбрасывается на новую пачку
         -- (если список пуст из-за того, что всё посещено, следующая попытка пойдёт уже без фильтра)
         state.visited = {[game.JobId] = true}
+
+        if stats.err then
+            log("пачка #" .. state.batch, "| ошибка запроса:", stats.err)
+        else
+            log("пачка #" .. state.batch, "| найдено подходящих:", stats.total,
+                "| пропущено посещённых:", stats.skipped, "| в пачке:", #list)
+            if #list > 0 then
+                log("серверы пачки:", table.concat(list, ", "))
+            end
+        end
     end
 
     local id = table.remove(state.servers, 1)
     if id then
         state.visited[id] = true
+        state.hops += 1
+        log("следующий сервер:", id, "| переход №" .. state.hops,
+            "| осталось в пачке #" .. state.batch .. ":", #state.servers)
     end
     saveState(state)
     return id
 end
 
 local tpFailed = false
-TeleportService.TeleportInitFailed:Connect(function(player)
+TeleportService.TeleportInitFailed:Connect(function(player, result, message)
     if player == LocalPlayer then
         tpFailed = true
+        log("ошибка телепорта:", tostring(result), "|", tostring(message))
     end
 end)
 
 while true do
     local id = nextServer()
     if not id then
+        log("серверов нет, повтор через", RETRY_DELAY, "сек")
         task.wait(RETRY_DELAY) -- серверов нет, пробуем получить новый список позже
     elseif id ~= game.JobId then
         tpFailed = false
-        local ok = pcall(function()
+        log("телепорт на", id, "| сейчас на JobId:", game.JobId)
+        local ok, err = pcall(function()
             TeleportService:TeleportToPlaceInstance(PLACE_ID, id, LocalPlayer)
         end)
-        if ok then
+        if not ok then
+            log("ошибка вызова телепорта:", tostring(err))
+        else
             local waited = 0
             while not tpFailed and waited < TP_TIMEOUT do
                 task.wait(0.25)
                 waited += 0.25
+            end
+            if not tpFailed then
+                log("тайм-аут телепорта, беру следующий сервер")
             end
         end
         -- если телепорт удался, скрипт перезапустится на новом сервере;
