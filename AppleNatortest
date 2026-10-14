@@ -5,7 +5,7 @@ local BATCH_SIZE = 40      -- сколько серверов в одном сп
 local RETRY_DELAY = 20     -- пауза, если серверов не нашлось
 local TP_TIMEOUT = 10      -- сколько ждём результата телепорта, потом берём следующий сервер
 local STATE_FILE = "AppleNator_servers.json"
-local LOGS = true          -- true = писать логи в консоль (F9), false = выключить
+local LOGS = false          -- true = писать логи в консоль (F9), false = выключить
 
 local function log(...)
     if LOGS then
