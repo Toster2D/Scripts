@@ -4,6 +4,9 @@ local PLATFORM_POS = Vector3.new(5000, 229, -9000)
 local BATCH_SIZE = 40      -- сколько серверов в одном списке, потом берём новый список
 local RETRY_DELAY = 20     -- пауза, если серверов не нашлось
 local TP_TIMEOUT = 10      -- сколько ждём результата телепорта, потом берём следующий сервер
+local TP_FAIL_DELAY = 3    -- пауза после ошибки телепорта
+local LOAD_DELAY = 5       -- пауза после загрузки, пока стримится карта
+local TOUCH_DELAY = 0.05   -- пауза между firetouchinterest
 local STATE_FILE = "AppleNator_servers.json"
 local LOGS = false          -- true = писать логи в консоль (F9), false = выключить
 
@@ -17,7 +20,7 @@ local queue_on_teleport = queue_on_teleport or queueonteleport
 if queue_on_teleport then
     queue_on_teleport(([[
         if not game:IsLoaded() then game.Loaded:Wait() end
-        task.wait(2)
+        task.wait(3)
         pcall(function()
             loadstring(game:HttpGet("%s"))()
         end)
@@ -42,42 +45,6 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
-local RENDER_OFF = true   -- отключить 3D-рендер
-local LOW_GFX = true      -- убрать текстуры/эффекты
-
-local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting")
-
-if LOW_GFX then
-    pcall(function() settings().Rendering.QualityLevel = 1 end)
-    Lighting.GlobalShadows = false
-    Lighting.FogEnd = 9e9
-    for _, v in ipairs(Lighting:GetChildren()) do
-        if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") then
-            v:Destroy()
-        end
-    end
-    local function strip(v)
-        if v:IsA("Decal") or v:IsA("Texture") or v:IsA("ParticleEmitter")
-            or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire")
-            or v:IsA("Smoke") or v:IsA("Sparkles") then
-            v:Destroy()
-        elseif v:IsA("MeshPart") then
-            v.TextureID = ""
-        elseif v:IsA("BasePart") then
-            v.Material = Enum.Material.SmoothPlastic
-            v.CastShadow = false
-        end
-    end
-    for _, v in ipairs(workspace:GetDescendants()) do pcall(strip, v) end
-    workspace.DescendantAdded:Connect(function(v) pcall(strip, v) end)
-end
-
-if RENDER_OFF then
-    RunService:Set3dRenderingEnabled(false)
-    if setfpscap then setfpscap(15) end
-end
-
 local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local hrp = character:WaitForChild("HumanoidRootPart", 15)
 if not hrp then
@@ -88,9 +55,11 @@ end
 local function touch(part)
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    if root and part then
-        firetouchinterest(root, part, 0)
-        firetouchinterest(root, part, 1)
+    if root and part and part.Parent then
+        pcall(function()
+            firetouchinterest(root, part, 0)
+            firetouchinterest(root, part, 1)
+        end)
     end
 end
 
@@ -99,7 +68,7 @@ local function hasEntered()
     return char and char:FindFirstChild("entered")
 end
 
-task.wait(1)
+task.wait(LOAD_DELAY) -- ждём стрим карты
 
 local platform = Instance.new("Part")
 platform.Name = "MyPlatform"
@@ -110,18 +79,22 @@ platform.Anchored = true
 platform.Position = PLATFORM_POS
 platform.Parent = workspace
 
-if not hasEntered() then
+-- Вход в арену
+pcall(function()
+    if hasEntered() then return end
     log("вход в арену через Teleport1...")
-    local timeout = 0
+    local waited, sinceTouch = 0, 1
     repeat
         task.wait(0.1)
-        timeout += 0.1
-        local lobby = workspace:FindFirstChild("Lobby")
-        local tp1 = lobby and lobby:FindFirstChild("Teleport1")
-        if tp1 and timeout % 1 < 0.1 then
-            touch(tp1)
+        waited += 0.1
+        sinceTouch += 0.1
+        if sinceTouch >= 1 then
+            sinceTouch = 0
+            local lobby = workspace:FindFirstChild("Lobby")
+            local tp1 = lobby and lobby:FindFirstChild("Teleport1")
+            if tp1 then touch(tp1) end
         end
-    until hasEntered() or timeout > 15
+    until hasEntered() or waited > 15
 
     if hasEntered() then
         log("вход выполнен, телепорт на платформу")
@@ -135,21 +108,26 @@ if not hasEntered() then
     else
         log("вход в арену не удался (таймаут)")
     end
-end
+end)
 
-local arena = workspace:FindFirstChild("Arena") or workspace:WaitForChild("Arena", 10)
-local island = arena and arena:FindFirstChild("island5")
-local slapples = island and island:FindFirstChild("Slapples")
-local gloves = 0
-if slapples then
-    for _, v in ipairs(slapples:GetDescendants()) do
-        if v.Name == "Glove" and v:FindFirstChildWhichIsA("TouchTransmitter") then
-            touch(v)
-            gloves += 1
+-- Сбор Glove
+pcall(function()
+    local arena = workspace:WaitForChild("Arena", 15)
+    local island = arena and arena:WaitForChild("island5", 10)
+    local slapples = island and island:WaitForChild("Slapples", 10)
+    local gloves = 0
+    if slapples then
+        task.wait(1)
+        for _, v in ipairs(slapples:GetDescendants()) do
+            if v.Name == "Glove" and v:FindFirstChildWhichIsA("TouchTransmitter") then
+                touch(v)
+                gloves += 1
+                task.wait(TOUCH_DELAY)
+            end
         end
     end
-end
-log("Slapples: собрано объектов Glove:", gloves)
+    log("Slapples: собрано объектов Glove:", gloves)
+end)
 
 local function countKeys(t)
     local n = 0
@@ -180,7 +158,8 @@ local function loadState()
 end
 
 local function saveState(state)
-    local raw = HttpService:JSONEncode(state)
+    local ok, raw = pcall(function() return HttpService:JSONEncode(state) end)
+    if not ok then return end
     local saved = false
     if writefile then
         saved = pcall(writefile, STATE_FILE, raw)
@@ -222,7 +201,6 @@ local function fetchServers(visited)
         end
     end
 
-    -- перемешиваем и берём не больше BATCH_SIZE
     for i = #list, 2, -1 do
         local j = math.random(1, i)
         list[i], list[j] = list[j], list[i]
@@ -235,11 +213,10 @@ end
 
 local function nextServer()
     local state = loadState()
-    state.visited[game.JobId] = true -- текущий сервер уже посещён
+    state.visited[game.JobId] = true
 
     if #state.servers == 0 then
-        local visitedCount = countKeys(state.visited)
-        log("список пуст, запрашиваю новую пачку (исключаю посещённых:", visitedCount, ")")
+        log("список пуст, запрашиваю новую пачку (исключаю посещённых:", countKeys(state.visited), ")")
         local list, stats = fetchServers(state.visited)
         state.servers = list
         state.batch += 1
@@ -250,9 +227,6 @@ local function nextServer()
         else
             log("пачка #" .. state.batch, "| найдено подходящих:", stats.total,
                 "| пропущено посещённых:", stats.skipped, "| в пачке:", #list)
-            if #list > 0 then
-                log("серверы пачки:", table.concat(list, ", "))
-            end
         end
     end
 
@@ -276,27 +250,37 @@ TeleportService.TeleportInitFailed:Connect(function(player, result, message)
 end)
 
 while true do
-    local id = nextServer()
-    if not id then
-        log("серверов нет, повтор через", RETRY_DELAY, "сек")
-        task.wait(RETRY_DELAY) -- серверов нет, пробуем получить новый список позже
-    elseif id ~= game.JobId then
-        tpFailed = false
-        log("телепорт на", id, "| сейчас на JobId:", game.JobId)
-        local ok, err = pcall(function()
-            TeleportService:TeleportToPlaceInstance(PLACE_ID, id, LocalPlayer)
-        end)
-        if not ok then
-            log("ошибка вызова телепорта:", tostring(err))
-        else
-            local waited = 0
-            while not tpFailed and waited < TP_TIMEOUT do
-                task.wait(0.25)
-                waited += 0.25
-            end
-            if not tpFailed then
-                log("тайм-аут телепорта, беру следующий сервер")
+    local okLoop, errLoop = pcall(function()
+        local id = nextServer()
+        if not id then
+            log("серверов нет, повтор через", RETRY_DELAY, "сек")
+            task.wait(RETRY_DELAY)
+        elseif id ~= game.JobId then
+            tpFailed = false
+            log("телепорт на", id, "| сейчас на JobId:", game.JobId)
+            local ok, err = pcall(function()
+                TeleportService:TeleportToPlaceInstance(PLACE_ID, id, LocalPlayer)
+            end)
+            if not ok then
+                log("ошибка вызова телепорта:", tostring(err))
+                task.wait(TP_FAIL_DELAY)
+            else
+                local waited = 0
+                while not tpFailed and waited < TP_TIMEOUT do
+                    task.wait(0.25)
+                    waited += 0.25
+                end
+                if tpFailed then
+                    task.wait(TP_FAIL_DELAY)
+                else
+                    log("тайм-аут телепорта, беру следующий сервер")
+                    task.wait(1)
+                end
             end
         end
+    end)
+    if not okLoop then
+        log("ошибка цикла:", tostring(errLoop))
+        task.wait(TP_FAIL_DELAY)
     end
 end
