@@ -1,4 +1,10 @@
 local SCRIPT_URL = "https://raw.githubusercontent.com/Toster2D/Scripts/refs/heads/main/AppleNatortest"
+local PLACE_ID = 6403373529
+local PLATFORM_POS = Vector3.new(5000, 229, -9000)
+local BATCH_SIZE = 20      -- сколько серверов в одном списке, потом берём новый список
+local RETRY_DELAY = 20     -- пауза, если серверов не нашлось
+local TP_TIMEOUT = 10      -- сколько ждём результата телепорта, потом берём следующий сервер
+local STATE_FILE = "AppleNator_servers.json"
 
 -- Автозапуск после телепорта
 local queue_on_teleport = queue_on_teleport or queueonteleport
@@ -16,23 +22,16 @@ if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
+if game.PlaceId ~= PLACE_ID then return end
+
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local hrp = character:WaitForChild("HumanoidRootPart", 15)
 if not hrp then return end
-
--- Place IDs
-local ID1, ID2, ID3 = 6403373529, 9015014224, 11520107397
-local supportedPlaceIds = {
-    [ID1] = true,
-    [ID2] = true,
-    [ID3] = true,
-}
-local isSupported = supportedPlaceIds[game.PlaceId]
-local PLATFORM_POS = Vector3.new(5000, 229, -9000)
 
 local function touch(part)
     local char = LocalPlayer.Character
@@ -43,26 +42,24 @@ local function touch(part)
     end
 end
 
-task.wait(1)
-
--- 1. Платформа
-if isSupported then
-    local platform = Instance.new("Part")
-    platform.Name = "MyPlatform"
-    platform.Size = Vector3.new(200, 10, 200)
-    platform.Transparency = 0.5
-    platform.CanCollide = true
-    platform.Anchored = true
-    platform.Position = PLATFORM_POS
-    platform.Parent = workspace
-end
-
--- 2. Вход в арену + телепорт на точку
 local function hasEntered()
     local char = LocalPlayer.Character
     return char and char:FindFirstChild("entered")
 end
 
+task.wait(1)
+
+-- 1. Платформа
+local platform = Instance.new("Part")
+platform.Name = "MyPlatform"
+platform.Size = Vector3.new(200, 10, 200)
+platform.Transparency = 0.5
+platform.CanCollide = true
+platform.Anchored = true
+platform.Position = PLATFORM_POS
+platform.Parent = workspace
+
+-- 2. Вход в арену + телепорт на платформу
 if not hasEntered() then
     local timeout = 0
     repeat
@@ -70,13 +67,13 @@ if not hasEntered() then
         timeout += 0.1
         local lobby = workspace:FindFirstChild("Lobby")
         local tp1 = lobby and lobby:FindFirstChild("Teleport1")
-        if tp1 and timeout % 1 < 0.1 then -- касание раз в секунду, не спамим
+        if tp1 and timeout % 1 < 0.1 then
             touch(tp1)
         end
     until hasEntered() or timeout > 15
 
-    if hasEntered() and isSupported then
-        task.wait(0.5) -- даём серверу закончить телепорт игрока
+    if hasEntered() then
+        task.wait(0.5)
         local char = LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then
@@ -98,14 +95,104 @@ if slapples then
     end
 end
 
--- 4. Цепочка телепортов: ID1 -> ID2 -> ID3 -> ID1
-local nextPlace = ({
-    [ID1] = ID2,
-    [ID2] = ID3,
-    [ID3] = ID1,
-})[game.PlaceId]
+-- 4. Серверхоп со списком серверов
+-- Список хранится в файле (переживает телепорт). Если файлов нет — в getgenv.
+local function loadState()
+    local raw
+    if readfile and isfile then
+        pcall(function()
+            if isfile(STATE_FILE) then raw = readfile(STATE_FILE) end
+        end)
+    end
+    if not raw and getgenv then
+        raw = getgenv().AppleNator_state
+    end
+    if raw then
+        local ok, data = pcall(function() return HttpService:JSONDecode(raw) end)
+        if ok and type(data) == "table" and type(data.servers) == "table" then
+            return data
+        end
+    end
+    return {servers = {}}
+end
 
-if nextPlace then
-    task.wait(2)
-    TeleportService:Teleport(nextPlace)
+local function saveState(state)
+    local raw = HttpService:JSONEncode(state)
+    local saved = false
+    if writefile then
+        saved = pcall(writefile, STATE_FILE, raw)
+    end
+    if not saved and getgenv then
+        getgenv().AppleNator_state = raw
+    end
+end
+
+local function fetchServers()
+    local ok, result = pcall(function()
+        local url = "https://games.roblox.com/v1/games/" .. PLACE_ID
+            .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true"
+        return HttpService:JSONDecode(game:HttpGet(url))
+    end)
+    if not ok or type(result) ~= "table" or type(result.data) ~= "table" then
+        return {}
+    end
+
+    local list = {}
+    for _, v in ipairs(result.data) do
+        if type(v) == "table"
+            and tonumber(v.playing) and tonumber(v.maxPlayers)
+            and v.playing < v.maxPlayers
+            and v.id ~= game.JobId then
+            list[#list + 1] = v.id
+        end
+    end
+
+    -- перемешиваем и берём не больше BATCH_SIZE
+    for i = #list, 2, -1 do
+        local j = math.random(1, i)
+        list[i], list[j] = list[j], list[i]
+    end
+    while #list > BATCH_SIZE do
+        table.remove(list)
+    end
+    return list
+end
+
+-- Берёт следующий сервер из списка; если список закончился — запрашивает новый
+local function nextServer()
+    local state = loadState()
+    if #state.servers == 0 then
+        state.servers = fetchServers()
+    end
+    local id = table.remove(state.servers, 1)
+    saveState(state)
+    return id
+end
+
+local tpFailed = false
+TeleportService.TeleportInitFailed:Connect(function(player)
+    if player == LocalPlayer then
+        tpFailed = true
+    end
+end)
+
+while true do
+    local id = nextServer()
+    if not id then
+        task.wait(RETRY_DELAY) -- серверов нет, пробуем получить новый список позже
+    elseif id ~= game.JobId then
+        tpFailed = false
+        local ok = pcall(function()
+            TeleportService:TeleportToPlaceInstance(PLACE_ID, id, LocalPlayer)
+        end)
+        if ok then
+            local waited = 0
+            while not tpFailed and waited < TP_TIMEOUT do
+                task.wait(0.25)
+                waited += 0.25
+            end
+        end
+        -- если телепорт удался, скрипт перезапустится на новом сервере;
+        -- иначе (полный сервер, ошибка) цикл берёт следующий сервер
+    end
 end
