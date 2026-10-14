@@ -3,9 +3,9 @@ local PLACE_ID = 6403373529
 local PLATFORM_POS = Vector3.new(5000, 229, -9000)
 local BATCH_SIZE = 40      -- сколько серверов в одном списке, потом берём новый список
 local RETRY_DELAY = 20     -- пауза, если серверов не нашлось
-local TP_TIMEOUT = 10      -- сколько ждём результата телепорта, потом берём следующий сервер
+local TP_TIMEOUT = 4      -- сколько ждём результата телепорта, потом берём следующий сервер
 local TP_FAIL_DELAY = 3    -- пауза после ошибки телепорта
-local LOAD_DELAY = 5       -- пауза после загрузки, пока стримится карта
+local LOAD_DELAY = 2       -- пауза после загрузки, пока стримится карта
 local TOUCH_DELAY = 0.05   -- пауза между firetouchinterest
 local STATE_FILE = "AppleNator_servers.json"
 local LOGS = false          -- true = писать логи в консоль (F9), false = выключить
