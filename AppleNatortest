@@ -1,7 +1,7 @@
 local SCRIPT_URL = "https://raw.githubusercontent.com/Toster2D/Scripts/refs/heads/main/AppleNatortest"
 local PLACE_ID = 6403373529
 local PLATFORM_POS = Vector3.new(5000, 229, -9000)
-local BATCH_SIZE = 20      -- сколько серверов в одном списке, потом берём новый список
+local BATCH_SIZE = 40      -- сколько серверов в одном списке, потом берём новый список
 local RETRY_DELAY = 20     -- пауза, если серверов не нашлось
 local TP_TIMEOUT = 10      -- сколько ждём результата телепорта, потом берём следующий сервер
 local STATE_FILE = "AppleNator_servers.json"
@@ -22,7 +22,14 @@ if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
-if game.PlaceId ~= PLACE_ID then return end
+print("[AppleNator] запущен, PlaceId:", game.PlaceId)
+
+-- Если запустили не на нужном плейсе — телепортируемся на него, скрипт стартует там сам
+if game.PlaceId ~= PLACE_ID then
+    task.wait(2)
+    game:GetService("TeleportService"):Teleport(PLACE_ID)
+    return
+end
 
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
@@ -31,7 +38,10 @@ local LocalPlayer = Players.LocalPlayer
 
 local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local hrp = character:WaitForChild("HumanoidRootPart", 15)
-if not hrp then return end
+if not hrp then
+    warn("[AppleNator] HumanoidRootPart не найден, остановка")
+    return
+end
 
 local function touch(part)
     local char = LocalPlayer.Character
@@ -110,10 +120,11 @@ local function loadState()
     if raw then
         local ok, data = pcall(function() return HttpService:JSONDecode(raw) end)
         if ok and type(data) == "table" and type(data.servers) == "table" then
+            data.visited = type(data.visited) == "table" and data.visited or {}
             return data
         end
     end
-    return {servers = {}}
+    return {servers = {}, visited = {}}
 end
 
 local function saveState(state)
@@ -127,7 +138,7 @@ local function saveState(state)
     end
 end
 
-local function fetchServers()
+local function fetchServers(visited)
     local ok, result = pcall(function()
         local url = "https://games.roblox.com/v1/games/" .. PLACE_ID
             .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true"
@@ -142,7 +153,8 @@ local function fetchServers()
         if type(v) == "table"
             and tonumber(v.playing) and tonumber(v.maxPlayers)
             and v.playing < v.maxPlayers
-            and v.id ~= game.JobId then
+            and v.id ~= game.JobId
+            and not visited[v.id] then
             list[#list + 1] = v.id
         end
     end
@@ -161,10 +173,20 @@ end
 -- Берёт следующий сервер из списка; если список закончился — запрашивает новый
 local function nextServer()
     local state = loadState()
+    state.visited[game.JobId] = true -- текущий сервер уже посещён
+
     if #state.servers == 0 then
-        state.servers = fetchServers()
+        -- новый список: исключаем серверы, где уже были в прошлой пачке
+        state.servers = fetchServers(state.visited)
+        -- память о посещённых сбрасывается на новую пачку
+        -- (если список пуст из-за того, что всё посещено, следующая попытка пойдёт уже без фильтра)
+        state.visited = {[game.JobId] = true}
     end
+
     local id = table.remove(state.servers, 1)
+    if id then
+        state.visited[id] = true
+    end
     saveState(state)
     return id
 end
