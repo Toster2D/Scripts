@@ -1,0 +1,501 @@
+-- AppleNator GUI: авто-портал, телепорт на платформу/координаты, спам клавиш
+-- RightShift = скрыть/показать GUI
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local VIM = game:GetService("VirtualInputManager")
+local LP = Players.LocalPlayer
+
+local PLATFORM_POS = Vector3.new(5000, 229, -9000)
+local PLATFORM_TP_OFFSET = Vector3.new(0, 8, 0)
+
+local cfg = {
+    autoPortal = false,
+    autoTP = false,
+    useCustom = false,          -- false = платформа, true = свои координаты
+    customPos = Vector3.new(0, 100, 0),
+    platformOn = false,         -- создавать платформу под точкой (по умолчанию выкл)
+    spam = false,
+    freeze = false,
+    autoReset = false,
+    portalDelay = 0.1,   -- пауза между касаниями портала
+    tpDelay = 0.1,       -- пауза после входа в арену перед ТП
+    resetDelay = 0.1,    -- пауза после последнего шага перед ресетом
+    interval = 0.05,
+    keys = {"LMB", "E"},        -- жмутся одновременно
+}
+
+if getgenv and getgenv().AppleGUI then
+    pcall(function() getgenv().AppleGUI:Destroy() end)
+end
+
+---------------------------------------------------------------- helpers
+local function touch(part)
+    local char = LP.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root and part and part.Parent and firetouchinterest then
+        pcall(function()
+            firetouchinterest(root, part, 0)
+            firetouchinterest(root, part, 1)
+        end)
+    end
+end
+
+local function hasEntered()
+    local char = LP.Character
+    return char and char:FindFirstChild("entered") ~= nil
+end
+
+local function targetPos()
+    if cfg.useCustom then return cfg.customPos end
+    return PLATFORM_POS + PLATFORM_TP_OFFSET
+end
+
+local frozenCF, savedWS, savedJP
+local platform
+local function removePlatform()
+    if platform then platform:Destroy() platform = nil end
+end
+
+local function ensurePlatform(tpPos)
+    if not platform or not platform.Parent then
+        platform = Instance.new("Part")
+        platform.Name = "MyPlatform"
+        platform.Size = Vector3.new(200, 10, 200)
+        platform.Transparency = 0.5
+        platform.Anchored = true
+        platform.CanCollide = true
+        platform.Parent = workspace
+    end
+    platform.Position = tpPos - PLATFORM_TP_OFFSET
+end
+
+local function updatePlatform()
+    if cfg.platformOn then ensurePlatform(targetPos()) else removePlatform() end
+end
+
+local function tpTo(pos, forcePlatform)
+    local char = LP.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    if forcePlatform or cfg.platformOn then ensurePlatform(pos) else removePlatform() end
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.CFrame = CFrame.new(pos)
+    if cfg.freeze then frozenCF = CFrame.new(pos) end
+end
+
+local function teleportNow() -- для авто-ТП
+    tpTo(targetPos(), not cfg.useCustom)
+end
+
+local function parseKeys(s)
+    local out = {}
+    for tok in tostring(s):gmatch("[^%+%s,]+") do
+        local u = tok:upper()
+        if u == "LMB" or u == "MOUSEBUTTON1" then
+            out[#out + 1] = "LMB"
+        elseif u == "RMB" or u == "MOUSEBUTTON2" then
+            out[#out + 1] = "RMB"
+        else
+            for _, k in ipairs(Enum.KeyCode:GetEnumItems()) do
+                if k.Name:upper() == u then out[#out + 1] = k.Name break end
+            end
+        end
+    end
+    return out
+end
+
+local function send(k, down)
+    if k == "LMB" then
+        local char = LP.Character
+        local tool = char and char:FindFirstChildOfClass("Tool")
+        if tool then
+            if down then tool:Activate() end
+            return
+        end
+        local m = UIS:GetMouseLocation()
+        VIM:SendMouseButtonEvent(m.X, m.Y, 0, down, game, 0)
+    elseif k == "RMB" then
+        local m = UIS:GetMouseLocation()
+        VIM:SendMouseButtonEvent(m.X, m.Y, 1, down, game, 0)
+    else
+        local kc = Enum.KeyCode[k]
+        if kc then VIM:SendKeyEvent(down, kc, false, game) end
+    end
+end
+
+-- Фриз
+local function getParts()
+    local char = LP.Character
+    return char and char:FindFirstChildOfClass("Humanoid"), char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function applyFreeze()
+    local hum, root = getParts()
+    if not (hum and root) then return end
+    frozenCF = root.CFrame
+    if hum.WalkSpeed > 0 then savedWS = hum.WalkSpeed end
+    if hum.JumpPower > 0 then savedJP = hum.JumpPower end
+    hum.WalkSpeed = 0
+    hum.JumpPower = 0
+end
+
+local function removeFreeze()
+    frozenCF = nil
+    local hum = getParts()
+    if hum then
+        hum.WalkSpeed = savedWS or 16
+        hum.JumpPower = savedJP or 50
+    end
+end
+
+game:GetService("RunService").Heartbeat:Connect(function()
+    if not (cfg.freeze and frozenCF) then return end
+    local hum, root = getParts()
+    if not (hum and root) then return end
+    if hum.WalkSpeed ~= 0 then hum.WalkSpeed = 0 end
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.CFrame = frozenCF
+end)
+
+-- Авто-ресет
+local resetAt
+local sinceTouch = 0
+local function armReset()
+    resetAt = cfg.autoReset and (os.clock() + cfg.resetDelay) or nil
+end
+
+local function resetCharacter()
+    local char = LP.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.Health = 0 end
+    if char then pcall(function() char:BreakJoints() end) end
+end
+
+LP.CharacterAdded:Connect(function()
+    sinceTouch = 0
+    if not (cfg.autoPortal or cfg.autoTP) then armReset() end
+    if cfg.freeze then
+        task.wait(0.5)
+        applyFreeze()
+    end
+end)
+
+---------------------------------------------------------------- GUI
+local parent = (gethui and gethui()) or game:GetService("CoreGui")
+local gui = Instance.new("ScreenGui")
+gui.Name = "AppleNatorGUI"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = parent
+if getgenv then getgenv().AppleGUI = gui end
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(270, 420)
+frame.Position = UDim2.fromOffset(40, 120)
+frame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 28)
+title.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+title.BorderSizePixel = 0
+title.Text = "RShift скрыть | RCtrl спам | Del стоп"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 13
+title.Parent = frame
+Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+
+local list = Instance.new("ScrollingFrame")
+list.Size = UDim2.new(1, -16, 1, -36)
+list.Position = UDim2.fromOffset(8, 32)
+list.BackgroundTransparency = 1
+list.BorderSizePixel = 0
+list.ScrollBarThickness = 4
+list.CanvasSize = UDim2.new()
+list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+list.Parent = frame
+local layout = Instance.new("UIListLayout", list)
+layout.Padding = UDim.new(0, 5)
+
+local function label(text)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, 0, 0, 16)
+    l.BackgroundTransparency = 1
+    l.Text = text
+    l.TextColor3 = Color3.fromRGB(170, 170, 185)
+    l.Font = Enum.Font.Gotham
+    l.TextSize = 12
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = list
+    return l
+end
+
+local function button(text, cb)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 28)
+    b.BackgroundColor3 = Color3.fromRGB(55, 55, 68)
+    b.BorderSizePixel = 0
+    b.Text = text
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.Font = Enum.Font.Gotham
+    b.TextSize = 13
+    b.AutoButtonColor = true
+    b.Parent = list
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    b.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            cb(b)
+        end
+    end)
+    return b
+end
+
+local refreshers = {}
+local function toggle(text, key, onChange)
+    local b
+    local function refresh()
+        b.Text = text .. ": " .. (cfg[key] and "ВКЛ" or "ВЫКЛ")
+        b.BackgroundColor3 = cfg[key] and Color3.fromRGB(40, 130, 70) or Color3.fromRGB(55, 55, 68)
+    end
+    refreshers[key] = function() refresh() end
+    b = button(text, function()
+        cfg[key] = not cfg[key]
+        refresh()
+        if onChange then onChange(cfg[key]) end
+    end)
+    refresh()
+    return b
+end
+
+local function box(parentObj, text, size, pos)
+    local t = Instance.new("TextBox")
+    t.Size = size
+    t.Position = pos or UDim2.new()
+    t.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    t.BorderSizePixel = 0
+    t.Text = text
+    t.TextColor3 = Color3.new(1, 1, 1)
+    t.PlaceholderColor3 = Color3.fromRGB(120, 120, 130)
+    t.Font = Enum.Font.Gotham
+    t.TextSize = 13
+    t.ClearTextOnFocus = false
+    t.Parent = parentObj
+    Instance.new("UICorner", t).CornerRadius = UDim.new(0, 6)
+    return t
+end
+
+-- Авто-портал / телепорт
+label("Авто (по умолчанию выкл)")
+toggle("Авто-портал (Teleport1)", "autoPortal")
+toggle("Авто-ТП после входа", "autoTP")
+toggle("Фриз (стоять на месте)", "freeze", function(on)
+    if on then applyFreeze() else removeFreeze() end
+end)
+toggle("Авто-ресет", "autoReset", armReset)
+
+local function numRow(text, key, minV, after)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 26)
+    row.BackgroundTransparency = 1
+    row.Parent = list
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.62, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(170, 170, 185)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 12
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+    local b = box(row, tostring(cfg[key]), UDim2.new(0.36, 0, 1, 0), UDim2.new(0.64, 0, 0, 0))
+    b.FocusLost:Connect(function()
+        local n = tonumber(b.Text)
+        if n then cfg[key] = math.max(n, minV) end
+        b.Text = tostring(cfg[key])
+        if after then after() end
+    end)
+end
+
+numRow("Задержка портала (сек):", "portalDelay", 0.05)
+numRow("Задержка ТП (сек):", "tpDelay", 0)
+numRow("Ресет через (сек):", "resetDelay", 0, armReset)
+
+-- Режим цели
+local modeBtn
+modeBtn = button("", function()
+    cfg.useCustom = not cfg.useCustom
+    modeBtn.Text = "Авто-ТП цель: " .. (cfg.useCustom and "свои координаты" or "платформа")
+    updatePlatform()
+end)
+modeBtn.Text = "Авто-ТП цель: платформа"
+
+-- Координаты
+local coordRow = Instance.new("Frame")
+coordRow.Size = UDim2.new(1, 0, 0, 26)
+coordRow.BackgroundTransparency = 1
+coordRow.Parent = list
+local bx = box(coordRow, "0", UDim2.new(0.32, 0, 1, 0), UDim2.new(0, 0, 0, 0))
+local by = box(coordRow, "100", UDim2.new(0.32, 0, 1, 0), UDim2.new(0.34, 0, 0, 0))
+local bz = box(coordRow, "0", UDim2.new(0.32, 0, 1, 0), UDim2.new(0.68, 0, 0, 0))
+local function applyCoords()
+    cfg.customPos = Vector3.new(tonumber(bx.Text) or 0, tonumber(by.Text) or 0, tonumber(bz.Text) or 0)
+    if cfg.useCustom then updatePlatform() end
+end
+for _, b in ipairs({bx, by, bz}) do b.FocusLost:Connect(applyCoords) end
+
+button("Сохранить мою позицию (коорды)", function()
+    local root = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local p = root.Position
+    bx.Text, by.Text, bz.Text = tostring(math.floor(p.X)), tostring(math.floor(p.Y)), tostring(math.floor(p.Z))
+    applyCoords()
+end)
+
+toggle("Платформа под точкой", "platformOn", updatePlatform)
+button("ТП → платформа", function()
+    tpTo(PLATFORM_POS + PLATFORM_TP_OFFSET, true)
+end)
+button("ТП → сохранённые коорды", function()
+    applyCoords()
+    tpTo(cfg.customPos, false)
+end)
+
+-- Спам
+label("Спам клавиш (через +, напр. LMB+E)")
+local keysBox = box(list, table.concat(cfg.keys, "+"), UDim2.new(1, 0, 0, 26))
+keysBox.FocusLost:Connect(function()
+    local k = parseKeys(keysBox.Text)
+    if #k > 0 then cfg.keys = k end
+    keysBox.Text = table.concat(cfg.keys, "+")
+end)
+
+local bindBtn
+bindBtn = button("Бинд: добавить следующую клавишу", function()
+    bindBtn.Text = "Нажми клавишу/кнопку мыши..."
+    local conn
+    conn = UIS.InputBegan:Connect(function(input)
+        local name
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            name = input.KeyCode.Name
+        elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
+            name = "LMB"
+        elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+            name = "RMB"
+        end
+        if name then
+            conn:Disconnect()
+            if not table.find(cfg.keys, name) then table.insert(cfg.keys, name) end
+            keysBox.Text = table.concat(cfg.keys, "+")
+            bindBtn.Text = "Бинд: добавить следующую клавишу"
+        end
+    end)
+end)
+
+button("Очистить клавиши", function()
+    cfg.keys = {}
+    keysBox.Text = ""
+end)
+
+local intRow = Instance.new("Frame")
+intRow.Size = UDim2.new(1, 0, 0, 26)
+intRow.BackgroundTransparency = 1
+intRow.Parent = list
+local intLbl = Instance.new("TextLabel")
+intLbl.Size = UDim2.new(0.6, 0, 1, 0)
+intLbl.BackgroundTransparency = 1
+intLbl.Text = "Интервал (сек):"
+intLbl.TextColor3 = Color3.fromRGB(170, 170, 185)
+intLbl.Font = Enum.Font.Gotham
+intLbl.TextSize = 12
+intLbl.TextXAlignment = Enum.TextXAlignment.Left
+intLbl.Parent = intRow
+local intBox = box(intRow, tostring(cfg.interval), UDim2.new(0.38, 0, 1, 0), UDim2.new(0.62, 0, 0, 0))
+intBox.FocusLost:Connect(function()
+    local n = tonumber(intBox.Text)
+    cfg.interval = n and math.max(n, 0.01) or cfg.interval
+    intBox.Text = tostring(cfg.interval)
+end)
+
+toggle("Спам", "spam")
+
+UIS.InputBegan:Connect(function(input, gp)
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        gui.Enabled = not gui.Enabled
+    elseif input.KeyCode == Enum.KeyCode.Delete then
+        cfg.spam = false
+        if refreshers.spam then refreshers.spam() end
+    elseif input.KeyCode == Enum.KeyCode.RightControl then
+        cfg.spam = not cfg.spam
+        if refreshers.spam then refreshers.spam() end
+    end
+end)
+
+local function mouseOverGui()
+    if not gui.Enabled then return false end
+    local m = UIS:GetMouseLocation()
+    local p, sz = frame.AbsolutePosition, frame.AbsoluteSize
+    return m.X >= p.X and m.X <= p.X + sz.X and m.Y >= p.Y and m.Y <= p.Y + sz.Y
+end
+
+---------------------------------------------------------------- loops
+-- Авто-портал + авто-ТП + запуск ресета
+task.spawn(function()
+    local wasEntered = false
+    while gui.Parent do
+        task.wait(0.05)
+        local entered = hasEntered() and true or false
+
+        if cfg.autoPortal and not entered then
+            sinceTouch += 0.05
+            if sinceTouch >= cfg.portalDelay then
+                sinceTouch = 0
+                local lobby = workspace:FindFirstChild("Lobby")
+                local tp1 = lobby and lobby:FindFirstChild("Teleport1")
+                if tp1 then touch(tp1) end
+            end
+        else
+            sinceTouch = 0
+        end
+
+        if entered and not wasEntered then
+            if cfg.tpDelay > 0 then task.wait(cfg.tpDelay) end
+            if cfg.autoTP then teleportNow() end
+            if cfg.freeze then applyFreeze() end
+            armReset() -- таймер ресета стартует после последнего включённого шага
+        end
+        wasEntered = entered
+    end
+end)
+
+-- Спам клавиш (все сразу)
+task.spawn(function()
+    while gui.Parent do
+        if cfg.spam and #cfg.keys > 0 and not mouseOverGui() and not UIS:GetFocusedTextBox() then
+            for _, k in ipairs(cfg.keys) do pcall(send, k, true) end
+            task.wait(0.01)
+            for _, k in ipairs(cfg.keys) do pcall(send, k, false) end
+            task.wait(cfg.interval)
+        else
+            task.wait(0.1)
+        end
+    end
+end)
+
+task.spawn(function()
+    while gui.Parent do
+        task.wait(0.25)
+        if cfg.autoReset and resetAt and os.clock() >= resetAt then
+            resetAt = nil
+            resetCharacter()
+        end
+    end
+end)
+
+updatePlatform()
