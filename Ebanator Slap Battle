@@ -1,0 +1,788 @@
+-- AppleNator GUI v3 — вкладки, улучшенный дизайн
+-- RightShift = скрыть/показать | RCtrl = спам вкл/выкл | Del = стоп спам
+
+local Players = game:GetService("Players")
+local UIS     = game:GetService("UserInputService")
+local VIM     = game:GetService("VirtualInputManager")
+local RS      = game:GetService("RunService")
+local LP      = Players.LocalPlayer
+
+local PLATFORM_POS       = Vector3.new(5000, 229, -9000)
+local PLATFORM_TP_OFFSET = Vector3.new(0, 8, 0)
+
+local cfg = {
+    autoPortal  = false,
+    autoTP      = false,
+    useCustom   = false,
+    customPos   = Vector3.new(0, 100, 0),
+    spam        = false,
+    freeze      = false,
+    autoReset   = false,
+    portalDelay = 0.1,
+    tpDelay     = 0.1,
+    resetDelay  = 0.1,
+    interval    = 0.05,
+    keys        = {"LMB", "E"},
+}
+
+if getgenv and getgenv().AppleGUI then
+    pcall(function() getgenv().AppleGUI:Destroy() end)
+end
+
+---------------------------------------------------------------- helpers
+local function touch(part)
+    local char = LP.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root and part and part.Parent and firetouchinterest then
+        pcall(function()
+            firetouchinterest(root, part, 0)
+            firetouchinterest(root, part, 1)
+        end)
+    end
+end
+
+local function hasEntered()
+    local char = LP.Character
+    return char and char:FindFirstChild("entered") ~= nil
+end
+
+local function targetPos()
+    if cfg.useCustom then return cfg.customPos end
+    return PLATFORM_POS + PLATFORM_TP_OFFSET
+end
+
+local frozenCF, savedWS, savedJP
+local platform
+
+local function ensurePlatform(tpPos)
+    if not platform or not platform.Parent then
+        platform          = Instance.new("Part")
+        platform.Name     = "MyPlatform"
+        platform.Size     = Vector3.new(200, 10, 200)
+        platform.Transparency = 0.5
+        platform.Anchored = true
+        platform.CanCollide = true
+        platform.Parent   = workspace
+    end
+    platform.Position = tpPos - PLATFORM_TP_OFFSET
+end
+
+local function updatePlatform()
+    ensurePlatform(targetPos())
+end
+
+local function tpTo(pos)
+    local char = LP.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    ensurePlatform(pos)
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.CFrame = CFrame.new(pos)
+    if cfg.freeze then frozenCF = CFrame.new(pos) end
+end
+
+local function teleportNow()
+    tpTo(targetPos())
+end
+
+local function parseKeys(s)
+    local out = {}
+    for tok in tostring(s):gmatch("[^%+%s,]+") do
+        local u = tok:upper()
+        if u == "LMB" or u == "MOUSEBUTTON1" then
+            out[#out+1] = "LMB"
+        elseif u == "RMB" or u == "MOUSEBUTTON2" then
+            out[#out+1] = "RMB"
+        else
+            for _, k in ipairs(Enum.KeyCode:GetEnumItems()) do
+                if k.Name:upper() == u then out[#out+1] = k.Name break end
+            end
+        end
+    end
+    return out
+end
+
+local function send(k, down)
+    if k == "LMB" then
+        local char = LP.Character
+        local tool = char and char:FindFirstChildOfClass("Tool")
+        if tool then if down then tool:Activate() end return end
+        local m = UIS:GetMouseLocation()
+        VIM:SendMouseButtonEvent(m.X, m.Y, 0, down, game, 0)
+    elseif k == "RMB" then
+        local m = UIS:GetMouseLocation()
+        VIM:SendMouseButtonEvent(m.X, m.Y, 1, down, game, 0)
+    else
+        local kc = Enum.KeyCode[k]
+        if kc then VIM:SendKeyEvent(down, kc, false, game) end
+    end
+end
+
+local function getParts()
+    local char = LP.Character
+    return char and char:FindFirstChildOfClass("Humanoid"),
+           char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function applyFreeze()
+    local hum, root = getParts()
+    if not (hum and root) then return end
+    frozenCF = root.CFrame
+    if hum.WalkSpeed > 0  then savedWS = hum.WalkSpeed end
+    if hum.JumpPower > 0  then savedJP = hum.JumpPower end
+    hum.WalkSpeed = 0
+    hum.JumpPower = 0
+end
+
+local function removeFreeze()
+    frozenCF = nil
+    local hum = getParts()
+    if hum then
+        hum.WalkSpeed = savedWS or 16
+        hum.JumpPower = savedJP or 50
+    end
+end
+
+RS.Heartbeat:Connect(function()
+    if not (cfg.freeze and frozenCF) then return end
+    local hum, root = getParts()
+    if not (hum and root) then return end
+    if hum.WalkSpeed ~= 0 then hum.WalkSpeed = 0 end
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.CFrame = frozenCF
+end)
+
+local resetAt
+local sinceTouch = 0
+
+local function armReset()
+    resetAt = cfg.autoReset and (os.clock() + cfg.resetDelay) or nil
+end
+
+local function resetCharacter()
+    local char = LP.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.Health = 0 end
+    if char then pcall(function() char:BreakJoints() end) end
+end
+
+LP.CharacterAdded:Connect(function()
+    sinceTouch = 0
+    if not (cfg.autoPortal or cfg.autoTP) then armReset() end
+    if cfg.freeze then task.wait(0.5) applyFreeze() end
+end)
+
+---------------------------------------------------------------- GUI
+local parent = (gethui and gethui()) or game:GetService("CoreGui")
+local gui = Instance.new("ScreenGui")
+gui.Name           = "AppleNatorGUI"
+gui.ResetOnSpawn   = false
+gui.IgnoreGuiInset = true
+gui.Parent         = parent
+if getgenv then getgenv().AppleGUI = gui end
+
+-- Цвета
+local C = {
+    bg      = Color3.fromRGB(10, 11, 18),
+    surface = Color3.fromRGB(16, 17, 28),
+    card    = Color3.fromRGB(20, 22, 36),
+    border  = Color3.fromRGB(35, 38, 62),
+    accent  = Color3.fromRGB(120, 80, 255),
+    accentD = Color3.fromRGB(70, 40, 180),
+    green   = Color3.fromRGB(40, 200, 100),
+    greenD  = Color3.fromRGB(25, 130, 65),
+    red     = Color3.fromRGB(220, 60, 80),
+    txt     = Color3.fromRGB(230, 230, 245),
+    sub     = Color3.fromRGB(110, 115, 150),
+    tabOn   = Color3.fromRGB(120, 80, 255),
+    tabOff  = Color3.fromRGB(20, 22, 36),
+}
+
+-- Главный фрейм
+local W, H = 290, 430
+local frame = Instance.new("Frame")
+frame.Size             = UDim2.fromOffset(W, H)
+frame.Position         = UDim2.fromOffset(50, 80)
+frame.BackgroundColor3 = C.bg
+frame.BorderSizePixel  = 0
+frame.Active           = true
+frame.Draggable        = true
+frame.Parent           = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+
+-- Тонкая акцентная линия сверху
+local topLine = Instance.new("Frame")
+topLine.Size             = UDim2.new(1, -24, 0, 2)
+topLine.Position         = UDim2.fromOffset(12, 0)
+topLine.BackgroundColor3 = C.accent
+topLine.BorderSizePixel  = 0
+topLine.Parent           = frame
+Instance.new("UICorner", topLine).CornerRadius = UDim.new(0, 2)
+
+-- Полоска-заголовок (только для перетаскивания + кнопки)
+local titleBar = Instance.new("Frame")
+titleBar.Size             = UDim2.new(1, 0, 0, 32)
+titleBar.Position         = UDim2.fromOffset(0, 2)
+titleBar.BackgroundTransparency = 1
+titleBar.Parent           = frame
+
+-- Кнопка свернуть (—)
+local minBtn = Instance.new("TextButton")
+minBtn.Size             = UDim2.fromOffset(26, 20)
+minBtn.Position         = UDim2.new(1, -58, 0.5, -10)
+minBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 80)
+minBtn.BorderSizePixel  = 0
+minBtn.Text             = "—"
+minBtn.TextColor3       = C.sub
+minBtn.Font             = Enum.Font.GothamBold
+minBtn.TextSize         = 13
+minBtn.AutoButtonColor  = true
+minBtn.Parent           = titleBar
+Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
+
+-- Кнопка закрыть (✕)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size             = UDim2.fromOffset(26, 20)
+closeBtn.Position         = UDim2.new(1, -28, 0.5, -10)
+closeBtn.BackgroundColor3 = Color3.fromRGB(180, 45, 60)
+closeBtn.BorderSizePixel  = 0
+closeBtn.Text             = "✕"
+closeBtn.TextColor3       = Color3.new(1,1,1)
+closeBtn.Font             = Enum.Font.GothamBold
+closeBtn.TextSize         = 12
+closeBtn.AutoButtonColor  = true
+closeBtn.Parent           = titleBar
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+-- Мини-рамка (показывается при свёрнутом состоянии)
+local miniFrame = Instance.new("Frame")
+miniFrame.Size             = UDim2.fromOffset(130, 32)
+miniFrame.Position         = frame.Position
+miniFrame.BackgroundColor3 = C.bg
+miniFrame.BorderSizePixel  = 0
+miniFrame.Active           = true
+miniFrame.Draggable        = true
+miniFrame.Visible          = false
+miniFrame.Parent           = gui
+Instance.new("UICorner", miniFrame).CornerRadius = UDim.new(0, 10)
+
+local miniTopLine = Instance.new("Frame")
+miniTopLine.Size             = UDim2.new(1, -16, 0, 2)
+miniTopLine.Position         = UDim2.fromOffset(8, 0)
+miniTopLine.BackgroundColor3 = C.accent
+miniTopLine.BorderSizePixel  = 0
+miniTopLine.Parent           = miniFrame
+Instance.new("UICorner", miniTopLine).CornerRadius = UDim.new(0, 2)
+
+local miniIco = Instance.new("TextLabel")
+miniIco.Size               = UDim2.fromOffset(22, 32)
+miniIco.Position           = UDim2.fromOffset(6, 0)
+miniIco.BackgroundTransparency = 1
+miniIco.Text               = "🍎"
+miniIco.Font               = Enum.Font.GothamBold
+miniIco.TextSize           = 15
+miniIco.Parent             = miniFrame
+
+local miniExpandBtn = Instance.new("TextButton")
+miniExpandBtn.Size             = UDim2.fromOffset(26, 20)
+miniExpandBtn.Position         = UDim2.new(1, -58, 0.5, -10)
+miniExpandBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 80)
+miniExpandBtn.BorderSizePixel  = 0
+miniExpandBtn.Text             = "□"
+miniExpandBtn.TextColor3       = C.sub
+miniExpandBtn.Font             = Enum.Font.GothamBold
+miniExpandBtn.TextSize         = 13
+miniExpandBtn.AutoButtonColor  = true
+miniExpandBtn.Parent           = miniFrame
+Instance.new("UICorner", miniExpandBtn).CornerRadius = UDim.new(0, 6)
+
+local miniCloseBtn = Instance.new("TextButton")
+miniCloseBtn.Size             = UDim2.fromOffset(26, 20)
+miniCloseBtn.Position         = UDim2.new(1, -28, 0.5, -10)
+miniCloseBtn.BackgroundColor3 = Color3.fromRGB(180, 45, 60)
+miniCloseBtn.BorderSizePixel  = 0
+miniCloseBtn.Text             = "✕"
+miniCloseBtn.TextColor3       = Color3.new(1,1,1)
+miniCloseBtn.Font             = Enum.Font.GothamBold
+miniCloseBtn.TextSize         = 12
+miniCloseBtn.AutoButtonColor  = true
+miniCloseBtn.Parent           = miniFrame
+Instance.new("UICorner", miniCloseBtn).CornerRadius = UDim.new(0, 6)
+
+-- Логика свернуть/развернуть/закрыть
+local function destroyAll()
+    if platform then pcall(function() platform:Destroy() end) end
+    gui:Destroy()
+end
+
+minBtn.MouseButton1Click:Connect(function()
+    miniFrame.Position = frame.Position
+    frame.Visible  = false
+    miniFrame.Visible = true
+end)
+
+miniExpandBtn.MouseButton1Click:Connect(function()
+    frame.Position = miniFrame.Position
+    miniFrame.Visible = false
+    frame.Visible  = true
+end)
+
+closeBtn.MouseButton1Click:Connect(destroyAll)
+miniCloseBtn.MouseButton1Click:Connect(destroyAll)
+
+-- Разделитель
+local div = Instance.new("Frame")
+div.Size             = UDim2.new(1, -20, 0, 1)
+div.Position         = UDim2.fromOffset(10, 36)
+div.BackgroundColor3 = C.border
+div.BorderSizePixel  = 0
+div.Parent           = frame
+
+-- Таббар
+local TAB_Y = 40
+local tabBar = Instance.new("Frame")
+tabBar.Size             = UDim2.new(1, -16, 0, 30)
+tabBar.Position         = UDim2.fromOffset(8, TAB_Y)
+tabBar.BackgroundColor3 = C.surface
+tabBar.BorderSizePixel  = 0
+tabBar.Parent           = frame
+Instance.new("UICorner", tabBar).CornerRadius = UDim.new(0, 8)
+
+local TABS = {"Авто", "Телепорт", "Спам"}
+local tabBtns   = {}
+local tabPages  = {}
+local activeTab = 1
+
+local function switchTab(i)
+    activeTab = i
+    for j, b in ipairs(tabBtns) do
+        b.BackgroundColor3 = (j == i) and C.tabOn or Color3.fromRGB(0,0,0)
+        b.BackgroundTransparency = (j == i) and 0 or 1
+        b.TextColor3 = (j == i) and C.txt or C.sub
+    end
+    for j, p in ipairs(tabPages) do
+        p.Visible = (j == i)
+    end
+end
+
+local tabW = (W - 16) / #TABS
+for i, name in ipairs(TABS) do
+    local b = Instance.new("TextButton")
+    b.Size             = UDim2.fromOffset(tabW - 4, 24)
+    b.Position         = UDim2.fromOffset((i-1)*tabW + 2, 3)
+    b.BackgroundColor3 = C.tabOn
+    b.BackgroundTransparency = 1
+    b.BorderSizePixel  = 0
+    b.Text             = name
+    b.TextColor3       = C.sub
+    b.Font             = Enum.Font.GothamBold
+    b.TextSize         = 12
+    b.AutoButtonColor  = false
+    b.Parent           = tabBar
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    b.MouseButton1Click:Connect(function() switchTab(i) end)
+    tabBtns[i] = b
+end
+
+-- Контент-зона
+local CONTENT_Y = TAB_Y + 34
+local CONTENT_H = H - CONTENT_Y - 8
+
+for i = 1, #TABS do
+    local page = Instance.new("ScrollingFrame")
+    page.Size                = UDim2.fromOffset(W - 16, CONTENT_H)
+    page.Position            = UDim2.fromOffset(8, CONTENT_Y)
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel     = 0
+    page.ScrollBarThickness  = 3
+    page.ScrollBarImageColor3 = C.accent
+    page.CanvasSize          = UDim2.new()
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.Visible             = false
+    page.Parent              = frame
+    local ul = Instance.new("UIListLayout", page)
+    ul.Padding = UDim.new(0, 5)
+    ul.SortOrder = Enum.SortOrder.LayoutOrder
+    Instance.new("UIPadding", page).PaddingBottom = UDim.new(0, 8)
+    tabPages[i] = page
+end
+
+---------------------------------------------------------------- UI Компоненты
+local refreshers = {}
+
+local function mkToggle(page, text, key, onChange)
+    local b = Instance.new("TextButton")
+    b.Size             = UDim2.new(1, 0, 0, 36)
+    b.BackgroundColor3 = C.card
+    b.BorderSizePixel  = 0
+    b.AutoButtonColor  = false
+    b.Parent           = page
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+
+    -- Иконка-метка слева
+    local dot = Instance.new("Frame")
+    dot.Size             = UDim2.fromOffset(4, 20)
+    dot.Position         = UDim2.fromOffset(8, 8)
+    dot.BackgroundColor3 = C.sub
+    dot.BorderSizePixel  = 0
+    dot.Parent           = b
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(0, 2)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size           = UDim2.new(1, -80, 1, 0)
+    lbl.Position       = UDim2.fromOffset(18, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text           = text
+    lbl.TextColor3     = C.txt
+    lbl.Font           = Enum.Font.Gotham
+    lbl.TextSize       = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent         = b
+
+    -- Пилюля-переключатель справа
+    local pill = Instance.new("Frame")
+    pill.Size             = UDim2.fromOffset(44, 22)
+    pill.Position         = UDim2.new(1, -52, 0.5, -11)
+    pill.BackgroundColor3 = C.border
+    pill.BorderSizePixel  = 0
+    pill.Parent           = b
+    Instance.new("UICorner", pill).CornerRadius = UDim.new(1, 0)
+
+    local knob = Instance.new("Frame")
+    knob.Size             = UDim2.fromOffset(16, 16)
+    knob.Position         = UDim2.fromOffset(3, 3)
+    knob.BackgroundColor3 = C.sub
+    knob.BorderSizePixel  = 0
+    knob.Parent           = pill
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+    local function refresh()
+        local on = cfg[key]
+        dot.BackgroundColor3  = on and C.green or C.sub
+        pill.BackgroundColor3 = on and C.green or C.border
+        knob.BackgroundColor3 = Color3.new(1,1,1)
+        knob.Position         = on and UDim2.fromOffset(25, 3) or UDim2.fromOffset(3, 3)
+        b.BackgroundColor3    = on and Color3.fromRGB(18, 30, 22) or C.card
+    end
+    refreshers[key] = refresh
+
+    b.MouseButton1Click:Connect(function()
+        cfg[key] = not cfg[key]
+        refresh()
+        if onChange then onChange(cfg[key]) end
+    end)
+    refresh()
+    return b
+end
+
+local function mkButton(page, text, color, cb)
+    local b = Instance.new("TextButton")
+    b.Size             = UDim2.new(1, 0, 0, 32)
+    b.BackgroundColor3 = color or C.card
+    b.BorderSizePixel  = 0
+    b.Text             = text
+    b.TextColor3       = C.txt
+    b.Font             = Enum.Font.GothamBold
+    b.TextSize         = 13
+    b.AutoButtonColor  = true
+    b.Parent           = page
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    b.MouseButton1Click:Connect(cb)
+    return b
+end
+
+local function mkNumRow(page, text, key, minV, after)
+    local row = Instance.new("Frame")
+    row.Size             = UDim2.new(1, 0, 0, 36)
+    row.BackgroundColor3 = C.card
+    row.BorderSizePixel  = 0
+    row.Parent           = page
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size           = UDim2.new(0.62, -8, 1, 0)
+    lbl.Position       = UDim2.fromOffset(12, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text           = text
+    lbl.TextColor3     = C.sub
+    lbl.Font           = Enum.Font.Gotham
+    lbl.TextSize       = 12
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent         = row
+
+    local bx = Instance.new("TextBox")
+    bx.Size            = UDim2.new(0.35, 0, 0, 26)
+    bx.Position        = UDim2.new(0.64, 0, 0.5, -13)
+    bx.BackgroundColor3 = C.surface
+    bx.BorderSizePixel = 0
+    bx.Text            = tostring(cfg[key])
+    bx.TextColor3      = C.txt
+    bx.Font            = Enum.Font.GothamBold
+    bx.TextSize        = 13
+    bx.TextXAlignment  = Enum.TextXAlignment.Center
+    bx.ClearTextOnFocus = false
+    bx.Parent          = row
+    Instance.new("UICorner", bx).CornerRadius = UDim.new(0, 6)
+
+    bx.FocusLost:Connect(function()
+        local n = tonumber(bx.Text)
+        if n then cfg[key] = math.max(n, minV) end
+        bx.Text = tostring(cfg[key])
+        if after then after() end
+    end)
+end
+
+local function mkBox(page, placeholder, initText, h)
+    local bx = Instance.new("TextBox")
+    bx.Size            = UDim2.new(1, 0, 0, h or 30)
+    bx.BackgroundColor3 = C.card
+    bx.BorderSizePixel = 0
+    bx.Text            = initText or ""
+    bx.PlaceholderText = placeholder or ""
+    bx.TextColor3      = C.txt
+    bx.PlaceholderColor3 = C.sub
+    bx.Font            = Enum.Font.GothamBold
+    bx.TextSize        = 13
+    bx.ClearTextOnFocus = false
+    bx.Parent          = page
+    Instance.new("UICorner", bx).CornerRadius = UDim.new(0, 8)
+    return bx
+end
+
+local function mkLabel(page, text)
+    local l = Instance.new("TextLabel")
+    l.Size             = UDim2.new(1, 0, 0, 16)
+    l.BackgroundTransparency = 1
+    l.Text             = text
+    l.TextColor3       = C.sub
+    l.Font             = Enum.Font.Gotham
+    l.TextSize         = 11
+    l.TextXAlignment   = Enum.TextXAlignment.Left
+    l.Parent           = page
+    return l
+end
+
+local function mkSep(page)
+    local s = Instance.new("Frame")
+    s.Size             = UDim2.new(1, 0, 0, 1)
+    s.BackgroundColor3 = C.border
+    s.BorderSizePixel  = 0
+    s.Parent           = page
+end
+
+---------------------------------------------------------------- ВКЛАДКА 1 — Авто
+local p1 = tabPages[1]
+
+mkToggle(p1, "Авто-портал", "autoPortal")
+mkToggle(p1, "Авто-ТП после входа", "autoTP")
+mkToggle(p1, "Фриз (стоять на месте)", "freeze", function(on)
+    if on then applyFreeze() else removeFreeze() end
+end)
+mkToggle(p1, "Авто-ресет (умирать)", "autoReset", armReset)
+
+mkSep(p1)
+mkLabel(p1, "  Задержки (секунды)")
+mkNumRow(p1, "Задержка портала",  "portalDelay", 0.05)
+mkNumRow(p1, "Задержка ТП",       "tpDelay",     0)
+mkNumRow(p1, "Ресет через",       "resetDelay",  0, armReset)
+
+---------------------------------------------------------------- ВКЛАДКА 2 — Телепорт
+local p2 = tabPages[2]
+
+local modeBtn
+local function refreshMode()
+    modeBtn.Text = cfg.useCustom and "Цель: свои координаты" or "Цель: платформа"
+    modeBtn.BackgroundColor3 = cfg.useCustom and C.accentD or C.card
+end
+modeBtn = mkButton(p2, "Цель: платформа", C.card, function()
+    cfg.useCustom = not cfg.useCustom
+    refreshMode()
+    updatePlatform()
+end)
+refreshMode()
+
+mkSep(p2)
+mkLabel(p2, "  Координаты (X / Y / Z)")
+
+local coordRow = Instance.new("Frame")
+coordRow.Size             = UDim2.new(1, 0, 0, 32)
+coordRow.BackgroundTransparency = 1
+coordRow.Parent           = p2
+
+local function mkCoordBox(x, placeholder, initVal)
+    local bx = Instance.new("TextBox")
+    bx.Size            = UDim2.new(0.32, -3, 1, 0)
+    bx.Position        = UDim2.new(x, 0, 0, 0)
+    bx.BackgroundColor3 = C.card
+    bx.BorderSizePixel = 0
+    bx.Text            = tostring(initVal)
+    bx.PlaceholderText = placeholder
+    bx.TextColor3      = C.txt
+    bx.PlaceholderColor3 = C.sub
+    bx.Font            = Enum.Font.GothamBold
+    bx.TextSize        = 13
+    bx.TextXAlignment  = Enum.TextXAlignment.Center
+    bx.ClearTextOnFocus = false
+    bx.Parent          = coordRow
+    Instance.new("UICorner", bx).CornerRadius = UDim.new(0, 7)
+    return bx
+end
+
+local bx = mkCoordBox(0,    "X", 0)
+local by = mkCoordBox(0.34, "Y", 100)
+local bz = mkCoordBox(0.68, "Z", 0)
+
+local function applyCoords()
+    cfg.customPos = Vector3.new(
+        tonumber(bx.Text) or 0,
+        tonumber(by.Text) or 0,
+        tonumber(bz.Text) or 0
+    )
+    if cfg.useCustom then updatePlatform() end
+end
+for _, b in ipairs({bx, by, bz}) do b.FocusLost:Connect(applyCoords) end
+
+mkButton(p2, "💾  Сохранить мою позицию", C.card, function()
+    local root = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local pos = root.Position
+    bx.Text = tostring(math.floor(pos.X))
+    by.Text = tostring(math.floor(pos.Y))
+    bz.Text = tostring(math.floor(pos.Z))
+    applyCoords()
+end)
+
+mkSep(p2)
+
+mkButton(p2, "🚀  ТП → сохранённые координаты", C.accentD, function()
+    applyCoords()
+    tpTo(cfg.customPos)
+end)
+
+mkButton(p2, "🏔  ТП → платформа", C.card, function()
+    tpTo(PLATFORM_POS + PLATFORM_TP_OFFSET)
+end)
+
+---------------------------------------------------------------- ВКЛАДКА 3 — Спам
+local p3 = tabPages[3]
+
+mkLabel(p3, "  Клавиши через + (напр. LMB+E)")
+local keysBox = mkBox(p3, "LMB+E", table.concat(cfg.keys, "+"), 32)
+keysBox.FocusLost:Connect(function()
+    local k = parseKeys(keysBox.Text)
+    if #k > 0 then cfg.keys = k end
+    keysBox.Text = table.concat(cfg.keys, "+")
+end)
+
+local bindBtn
+bindBtn = mkButton(p3, "➕  Добавить клавишу нажатием", C.card, function()
+    bindBtn.Text = "⌨  Нажми клавишу..."
+    local conn
+    conn = UIS.InputBegan:Connect(function(input)
+        local name
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            name = input.KeyCode.Name
+        elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
+            name = "LMB"
+        elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+            name = "RMB"
+        end
+        if name then
+            conn:Disconnect()
+            if not table.find(cfg.keys, name) then table.insert(cfg.keys, name) end
+            keysBox.Text = table.concat(cfg.keys, "+")
+            bindBtn.Text = "➕  Добавить клавишу нажатием"
+        end
+    end)
+end)
+
+mkButton(p3, "🗑  Очистить клавиши", C.card, function()
+    cfg.keys = {}
+    keysBox.Text = ""
+end)
+
+mkSep(p3)
+mkNumRow(p3, "Интервал (сек)", "interval", 0.01)
+
+mkToggle(p3, "СПАМ (RCtrl вкл/выкл)", "spam")
+
+-- Большая кнопка стоп спама
+mkButton(p3, "⏹  Стоп спам", C.red, function()
+    cfg.spam = false
+    if refreshers.spam then refreshers.spam() end
+end)
+
+---------------------------------------------------------------- Активируем первую вкладку
+switchTab(1)
+
+---------------------------------------------------------------- Горячие клавиши
+UIS.InputBegan:Connect(function(input, _gp)
+    if input.KeyCode == Enum.KeyCode.Delete then
+        cfg.spam = false
+        if refreshers.spam then refreshers.spam() end
+    elseif input.KeyCode == Enum.KeyCode.RightControl then
+        cfg.spam = not cfg.spam
+        if refreshers.spam then refreshers.spam() end
+    end
+end)
+
+local function mouseOverGui()
+    if not gui.Enabled then return false end
+    local m = UIS:GetMouseLocation()
+    local p, sz = frame.AbsolutePosition, frame.AbsoluteSize
+    return m.X >= p.X and m.X <= p.X + sz.X and m.Y >= p.Y and m.Y <= p.Y + sz.Y
+end
+
+---------------------------------------------------------------- Loops
+task.spawn(function()
+    local wasEntered = false
+    while gui.Parent do
+        task.wait(0.05)
+        local entered = hasEntered() and true or false
+
+        if cfg.autoPortal and not entered then
+            sinceTouch += 0.05
+            if sinceTouch >= cfg.portalDelay then
+                sinceTouch = 0
+                local lobby = workspace:FindFirstChild("Lobby")
+                local tp1   = lobby and lobby:FindFirstChild("Teleport1")
+                if tp1 then touch(tp1) end
+            end
+        else
+            sinceTouch = 0
+        end
+
+        if entered and not wasEntered then
+            if cfg.tpDelay > 0 then task.wait(cfg.tpDelay) end
+            if cfg.autoTP then teleportNow() end
+            if cfg.freeze then applyFreeze() end
+            armReset()
+        end
+        wasEntered = entered
+    end
+end)
+
+task.spawn(function()
+    while gui.Parent do
+        if cfg.spam and #cfg.keys > 0 and not mouseOverGui() and not UIS:GetFocusedTextBox() then
+            for _, k in ipairs(cfg.keys) do pcall(send, k, true) end
+            task.wait(0.01)
+            for _, k in ipairs(cfg.keys) do pcall(send, k, false) end
+            task.wait(cfg.interval)
+        else
+            task.wait(0.1)
+        end
+    end
+end)
+
+task.spawn(function()
+    while gui.Parent do
+        task.wait(0.25)
+        if cfg.autoReset and resetAt and os.clock() >= resetAt then
+            resetAt = nil
+            resetCharacter()
+        end
+    end
+end)
+
+updatePlatform()
